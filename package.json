@@ -12,15 +12,13 @@
     "build": "npm run build --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "db:start": "tsx scripts/start-embedded-postgres.ts",
+    "db:start": "echo 'For local development with embedded PostgreSQL, see LOCAL_DEVELOPMENT.md'",
     "prisma:generate": "prisma generate",
-    "prisma:migrate": "prisma migrate dev --name phase_2_foundation",
+    "prisma:migrate": "prisma migrate deploy",
     "prisma:seed": "tsx prisma/seed/seed.ts"
   },
   "devDependencies": {
-    "@embedded-postgres/windows-x64": "^16.14.0-beta.17",
     "concurrently": "^9.1.2",
-    "embedded-postgres": "^16.14.0-beta.17",
     "prisma": "^6.1.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"

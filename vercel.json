@@ -1,0 +1,21 @@
+{
+  "$schema": "https://openapi.vercel.sh",
+  "version": 2,
+  "env": {
+    "DATABASE_URL": "@database_url",
+    "JWT_ACCESS_SECRET": "@jwt_access_secret",
+    "JWT_REFRESH_SECRET": "@jwt_refresh_secret"
+  },
+  "buildCommand": "npm run build && npm run prisma:generate",
+  "installCommand": "npm install",
+  "outputDirectory": ".",
+  "framework": null,
+  "functions": {
+    "apps/api/**": {
+      "runtime": "nodejs18.x"
+    },
+    "apps/web/**": {
+      "runtime": "nodejs18.x"
+    }
+  }
+}
