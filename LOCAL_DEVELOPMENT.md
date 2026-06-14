@@ -4,7 +4,87 @@ This guide explains how to set up the project for **local development** with Pos
 
 ---
 
-## Option 1: Using Railway (Recommended)
+## Option 1: Using Neon PostgreSQL (Recommended - Free & Easy)
+
+### 1. Create Neon Database
+
+```bash
+# Visit https://neon.tech
+# 1. Sign up with GitHub
+# 2. Create new project
+# 3. Choose PostgreSQL 15 (default)
+# 4. Wait for deployment (1 minute)
+# 5. Database "neondb" is created automatically
+# 6. Click "Connect" button
+# 7. Copy the connection string
+```
+
+### 2. Connection String Format
+
+**Neon always includes `?sslmode=require` automatically:**
+```
+postgresql://neondb_owner:password@ep-xxxxx.region.neon.tech:5432/neondb?sslmode=require
+```
+
+### 3. Configure Local Environment
+
+```bash
+# In your local .env file:
+DATABASE_URL="postgresql://neondb_owner:password@ep-xxxxx.region.neon.tech:5432/neondb?sslmode=require"
+
+# Paste the ENTIRE connection string from Neon dashboard
+# Keep the ?sslmode=require part - it's required!
+```
+
+### 4. Run Database Setup
+
+```bash
+# Install dependencies
+npm install
+
+# Generate Prisma client
+npm run prisma:generate
+
+# Run migrations
+npm run prisma:migrate
+
+# Seed demo data (optional)
+npm run prisma:seed
+```
+
+### 5. Start Development
+
+```bash
+# Start both web and API
+npm run dev
+
+# OR start separately:
+npm run dev --workspace @school-erp/api     # Terminal 1
+npm run dev --workspace @school-erp/web     # Terminal 2
+
+# Open browser:
+# Web: http://localhost:3000
+# API: http://localhost:4000
+# Prisma Studio: npx prisma studio → localhost:5555
+```
+
+### 6. Verify Connection
+
+```bash
+# In Neon dashboard, check "Operations" tab
+# You should see successful connections from your machine
+```
+
+**Advantages of Neon:**
+- ✅ Free tier (10GB storage)
+- ✅ No SSL setup needed (automatic)
+- ✅ Same database as production (same SSL mode)
+- ✅ Easy team access
+- ✅ No local setup required
+
+---
+
+## Option 2: Using Railway (Also Good)
 
 ### 1. Create Railway Database
 
@@ -50,17 +130,13 @@ npm run prisma:seed
 # Start both web and API
 npm run dev
 
-# OR start them separately:
-npm run dev --workspace @school-erp/api
-npm run dev --workspace @school-erp/web
-
 # View database UI (optional)
 npx prisma studio
 ```
 
 ---
 
-## Option 2: Using Docker PostgreSQL
+## Option 3: Using Docker PostgreSQL (Local & Fast)
 
 ### 1. Install Docker
 
@@ -115,7 +191,7 @@ docker logs school-erp-postgres
 
 ---
 
-## Option 3: Using Embedded PostgreSQL (Windows Only - Local Dev Only)
+## Option 4: Using Embedded PostgreSQL (Windows Only - Local Dev Only)
 
 ⚠️ **WARNING**: This is for **local Windows development only** and will NOT work on Vercel.
 
