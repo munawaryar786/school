@@ -1,0 +1,80 @@
+import cors from "cors";
+import express from "express";
+import helmet from "helmet";
+import morgan from "morgan";
+import { env } from "./config/env";
+import { errorHandler } from "./middleware/error-handler";
+import { requestId } from "./middleware/request-id";
+import { apiSecurity } from "./middleware/api-security";
+import { authRoutes } from "./modules/auth/auth.routes";
+import { superAdminRoutes } from "./modules/super-admin/super-admin.routes";
+import { schoolAdminRoutes } from "./modules/school-admin/school-admin.routes";
+import { teacherRoutes } from "./modules/teacher/teacher.routes";
+import { studentRoutes } from "./modules/student/student.routes";
+import { parentRoutes } from "./modules/parent/parent.routes";
+import { admissionsRoutes } from "./modules/admissions/admissions.routes";
+import { academicRoutes } from "./modules/academic/academic.routes";
+import { attendanceRoutes } from "./modules/attendance/attendance.routes";
+import { examinationRoutes } from "./modules/examination/examination.routes";
+import { lmsRoutes } from "./modules/lms/lms.routes";
+import { financeRoutes } from "./modules/finance/finance.routes";
+import { advancedFinanceRoutes } from "./modules/advanced-finance/advanced-finance.routes";
+import { hrRoutes } from "./modules/hr/hr.routes";
+import { libraryRoutes } from "./modules/library/library.routes";
+import { communicationRoutes } from "./modules/communication/communication.routes";
+import { reportsRoutes } from "./modules/reports/reports.routes";
+import { documentsRoutes } from "./modules/documents/documents.routes";
+import { certificatesRoutes } from "./modules/certificates/certificates.routes";
+import { meetingsRoutes } from "./modules/meetings/meetings.routes";
+import { cmsRoutes } from "./modules/cms/cms.routes";
+import { mobileRoutes } from "./modules/mobile/mobile.routes";
+import { securityRoutes } from "./modules/security/security.routes";
+import { productionReadinessRoutes } from "./modules/production-readiness/production-readiness.routes";
+
+export function createApp() {
+  const app = express();
+
+  app.use(helmet());
+  app.use(
+    cors({
+      origin: env.WEB_ORIGIN,
+      credentials: true
+    })
+  );
+  app.use(express.json({ limit: "1mb" }));
+  app.use(requestId);
+  app.use(apiSecurity);
+  app.use(morgan("combined"));
+
+  app.get("/health", (_req, res) => {
+    res.json({ status: "ok" });
+  });
+
+  app.use("/api/v1/auth", authRoutes);
+  app.use("/api/v1/super-admin", superAdminRoutes);
+  app.use("/api/v1/school-admin", schoolAdminRoutes);
+  app.use("/api/v1/teacher", teacherRoutes);
+  app.use("/api/v1/student", studentRoutes);
+  app.use("/api/v1/parent", parentRoutes);
+  app.use("/api/v1/admissions", admissionsRoutes);
+  app.use("/api/v1/academic", academicRoutes);
+  app.use("/api/v1/attendance", attendanceRoutes);
+  app.use("/api/v1/examination", examinationRoutes);
+  app.use("/api/v1/lms", lmsRoutes);
+  app.use("/api/v1/finance", financeRoutes);
+  app.use("/api/v1/advanced-finance", advancedFinanceRoutes);
+  app.use("/api/v1/hr", hrRoutes);
+  app.use("/api/v1/library", libraryRoutes);
+  app.use("/api/v1/communication", communicationRoutes);
+  app.use("/api/v1/reports", reportsRoutes);
+  app.use("/api/v1/documents", documentsRoutes);
+  app.use("/api/v1/certificates", certificatesRoutes);
+  app.use("/api/v1/meetings", meetingsRoutes);
+  app.use("/api/v1/cms", cmsRoutes);
+  app.use("/api/v1/mobile", mobileRoutes);
+  app.use("/api/v1/security", securityRoutes);
+  app.use("/api/v1/production-readiness", productionReadinessRoutes);
+  app.use(errorHandler);
+
+  return app;
+}

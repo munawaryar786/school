@@ -1,0 +1,34 @@
+{
+  "name": "school-erp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Production-grade School ERP Management System",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm:dev --workspace @school-erp/api\" \"npm:dev --workspace @school-erp/web\"",
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "db:start": "tsx scripts/start-embedded-postgres.ts",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev --name phase_2_foundation",
+    "prisma:seed": "tsx prisma/seed/seed.ts"
+  },
+  "devDependencies": {
+    "@embedded-postgres/windows-x64": "^16.14.0-beta.17",
+    "concurrently": "^9.1.2",
+    "embedded-postgres": "^16.14.0-beta.17",
+    "prisma": "^6.1.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed/seed.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.19.3"
+  }
+}

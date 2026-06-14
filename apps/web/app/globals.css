@@ -1,0 +1,74 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: 210 20% 98%;
+  --foreground: 220 22% 12%;
+  --surface: 0 0% 100%;
+  --muted: 214 24% 93%;
+  --muted-foreground: 220 9% 43%;
+  --border: 214 22% 86%;
+  --primary: 221 83% 53%;
+  --primary-foreground: 0 0% 100%;
+  --success: 145 63% 36%;
+  --warning: 34 94% 48%;
+  --danger: 0 72% 51%;
+}
+
+.theme-super-admin {
+  --primary: 271 81% 56%;
+}
+
+.theme-school-admin {
+  --primary: 217 91% 50%;
+}
+
+.theme-teacher {
+  --primary: 142 70% 34%;
+}
+
+.theme-student {
+  --primary: 28 92% 50%;
+}
+
+.theme-parent {
+  --primary: 328 78% 52%;
+}
+
+.theme-academic {
+  --primary: 174 72% 33%;
+}
+
+.theme-security {
+  --primary: 181 72% 19%;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-height: 100%;
+}
+
+body {
+  min-height: 100%;
+  background:
+    linear-gradient(180deg, hsl(210 20% 98%) 0%, hsl(214 24% 94%) 100%);
+  color: hsl(var(--foreground));
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.24);
+}
+
