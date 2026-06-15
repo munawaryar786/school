@@ -1,0 +1,7 @@
+{
+  "version": 2,
+  "installCommand": "cd ../.. && npm ci --no-audit --no-fund",
+  "buildCommand": "cd ../.. && npm run build --workspace @school-erp/shared && npm run build --workspace @school-erp/ui && npm run build --workspace @school-erp/web",
+  "framework": "nextjs",
+  "outputDirectory": ".next"
+}

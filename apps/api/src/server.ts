@@ -3,10 +3,6 @@ import { env } from "./config/env";
 
 const app = createApp();
 
-/**
- * Local development mein normal HTTP server start hota hai.
- * Vercel par Express app serverless function ke taur par export hoti hai.
- */
 if (!process.env.VERCEL) {
   app.listen(env.API_PORT, () => {
     console.log(
@@ -15,4 +11,5 @@ if (!process.env.VERCEL) {
   });
 }
 
+export default app;
 module.exports = app;

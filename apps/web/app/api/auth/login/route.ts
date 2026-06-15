@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { loginSchema, type ApiResponse, type LoginResult } from "@school-erp/shared";
-
-const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
+import { backendUrl } from "../../../../lib/api-proxy";
 
 export async function POST(request: Request) {
   const body = await request.json();
@@ -21,7 +20,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const response = await fetch(`${apiUrl}/api/v1/auth/login`, {
+  const response = await fetch(backendUrl("/api/v1/auth/login"), {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(parsed.data),

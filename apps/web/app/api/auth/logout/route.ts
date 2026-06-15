@@ -1,14 +1,13 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-
-const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
+import { backendUrl } from "../../../../lib/api-proxy";
 
 export async function POST() {
   const store = await cookies();
   const token = store.get("erp_access_token")?.value;
 
   if (token) {
-    await fetch(`${apiUrl}/api/v1/auth/logout`, {
+    await fetch(backendUrl("/api/v1/auth/logout"), {
       method: "POST",
       headers: {
         authorization: `Bearer ${token}`
@@ -23,4 +22,3 @@ export async function POST() {
   }
   return response;
 }
-

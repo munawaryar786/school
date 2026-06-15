@@ -3,13 +3,17 @@
   "version": "0.1.0",
   "private": true,
   "description": "Production-grade School ERP Management System",
+  "engines": {
+    "node": "22.x",
+    "npm": ">=10"
+  },
   "workspaces": [
     "apps/*",
     "packages/*"
   ],
   "scripts": {
     "dev": "concurrently \"npm:dev --workspace @school-erp/api\" \"npm:dev --workspace @school-erp/web\"",
-    "build": "npm run build --workspaces --if-present",
+    "build": "npm run build --workspace @school-erp/shared && npm run build --workspace @school-erp/ui && npm run prisma:generate && npm run build --workspace @school-erp/api && npm run build --workspace @school-erp/web",
     "test": "npm run test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "db:start": "echo 'For local development with embedded PostgreSQL, see LOCAL_DEVELOPMENT.md'",
@@ -19,7 +23,7 @@
   },
   "devDependencies": {
     "concurrently": "^9.1.2",
-    "prisma": "^6.1.0",
+    "prisma": "^6.19.3",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
   },

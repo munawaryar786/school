@@ -30,6 +30,7 @@ import { cmsRoutes } from "./modules/cms/cms.routes";
 import { mobileRoutes } from "./modules/mobile/mobile.routes";
 import { securityRoutes } from "./modules/security/security.routes";
 import { productionReadinessRoutes } from "./modules/production-readiness/production-readiness.routes";
+import { prisma } from "./db/prisma";
 
 export function createApp() {
   const app = express();
@@ -48,6 +49,23 @@ export function createApp() {
 
   app.get("/health", (_req, res) => {
     res.json({ status: "ok" });
+  });
+
+  app.get("/", (_req, res) => {
+    res.json({ name: "School ERP API", status: "ok" });
+  });
+
+  app.get("/favicon.ico", (_req, res) => {
+    res.status(204).end();
+  });
+
+  app.get("/api/v1/health/db", async (_req, res, next) => {
+    try {
+      await prisma.$queryRaw`SELECT 1`;
+      res.json({ status: "ok" });
+    } catch (error) {
+      next(error);
+    }
   });
 
   app.use("/api/v1/auth", authRoutes);
@@ -74,6 +92,18 @@ export function createApp() {
   app.use("/api/v1/mobile", mobileRoutes);
   app.use("/api/v1/security", securityRoutes);
   app.use("/api/v1/production-readiness", productionReadinessRoutes);
+  app.use((_req, res) => {
+    res.status(404).json({
+      success: false,
+      error: {
+        code: "NOT_FOUND",
+        message: "Route not found."
+      },
+      meta: {
+        requestId: res.locals.requestId
+      }
+    });
+  });
   app.use(errorHandler);
 
   return app;

@@ -4,10 +4,15 @@
     "module": "CommonJS",
     "moduleResolution": "Node",
     "types": ["node"],
-    "noEmit": true,
+    "rootDir": "src",
+    "outDir": "dist",
+    "noEmit": false,
+    "declaration": true,
+    "sourceMap": true,
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
     "verbatimModuleSyntax": false
   },
-  "include": ["src"]
+  "include": ["src"],
+  "exclude": ["dist", "src/**/*.test.ts"]
 }
