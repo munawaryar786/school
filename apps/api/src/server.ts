@@ -3,9 +3,9 @@ import { env } from "./config/env";
 
 const app = createApp();
 
-/*
- * Local development میں HTTP server start ہوگا۔
- * Vercel پر app کو serverless handler کے طور پر export کیا جائے گا۔
+/**
+ * Local development mein normal HTTP server start hota hai.
+ * Vercel par Express app serverless function ke taur par export hoti hai.
  */
 if (!process.env.VERCEL) {
   app.listen(env.API_PORT, () => {
@@ -15,4 +15,4 @@ if (!process.env.VERCEL) {
   });
 }
 
-export default app;
+module.exports = app;
