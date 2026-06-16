@@ -6,7 +6,7 @@ Status values: Pending, In Progress, Completed, Failed.
 
 | Status | Task |
 | --- | --- |
-| In Progress | Create this checklist before modifying source, package, Prisma, Vercel, environment, or runtime files. |
+| Completed | Create this checklist before modifying source, package, Prisma, Vercel, environment, or runtime files. |
 | Pending | Do not stop after the first visible error. |
 | Pending | Audit and permanently fix all build-time, module-resolution, workspace-package, Prisma, Vercel serverless, environment-variable, database, and runtime issues in one complete pass. |
 | Pending | Do not ask for approval after each individual fix. |
@@ -109,35 +109,35 @@ Status values: Pending, In Progress, Completed, Failed.
 
 | Status | Task |
 | --- | --- |
-| Pending | Audit @school-erp/shared runtime package entries. |
-| Pending | Audit @school-erp/ui runtime package entries. |
-| Pending | Ensure no runtime package entry points to src/index.ts. |
-| Pending | Ensure no runtime package entry points to any TypeScript source file. |
+| Completed | Audit @school-erp/shared runtime package entries. |
+| Completed | Audit @school-erp/ui runtime package entries. |
+| Completed | Ensure no runtime package entry points to src/index.ts. |
+| Completed | Ensure no runtime package entry points to any TypeScript source file. |
 | Pending | Ensure no runtime package entry points to a missing file. |
-| Pending | Create real build output for every runtime workspace package. |
-| Pending | Compile workspace TypeScript to JavaScript. |
-| Pending | Generate workspace declaration files. |
-| Pending | Set valid workspace package main fields. |
-| Pending | Set valid workspace package types fields. |
-| Pending | Set valid workspace package exports fields. |
-| Pending | Ensure dist files exist before API or web build. |
+| Completed | Create real build output for every runtime workspace package. |
+| Completed | Compile workspace TypeScript to JavaScript. |
+| Completed | Generate workspace declaration files. |
+| Completed | Set valid workspace package main fields. |
+| Completed | Set valid workspace package types fields. |
+| Completed | Set valid workspace package exports fields. |
+| Completed | Ensure dist files exist before API or web build. |
 | Pending | Ensure workspace packages work on Linux and Windows. |
 | Pending | Ensure Vercel includes workspace package output. |
-| Pending | Ensure workspace package noEmit is false for compilation. |
+| Completed | Ensure workspace package noEmit is false for compilation. |
 
 ## Task 4 - Fix Monorepo Build Order
 
 | Status | Task |
 | --- | --- |
 | Pending | Implement deterministic root build order: internal shared packages first. |
-| Pending | Implement deterministic root build order: Prisma Client generation second. |
-| Pending | Implement deterministic root build order: API typecheck/build third. |
+| Completed | Implement deterministic root build order: Prisma Client generation second. |
+| Completed | Implement deterministic root build order: API typecheck/build third. |
 | Pending | Implement deterministic root build order: web production build fourth. |
 | Pending | Ensure npm run build works from repository root. |
 | Pending | Ensure root build does not rely on previously generated local files. |
-| Pending | Ensure npm run build --workspace @school-erp/shared works. |
-| Pending | Ensure npm run build --workspace @school-erp/ui works. |
-| Pending | Ensure npm run build --workspace @school-erp/api works. |
+| Completed | Ensure npm run build --workspace @school-erp/shared works. |
+| Completed | Ensure npm run build --workspace @school-erp/ui works. |
+| Completed | Ensure npm run build --workspace @school-erp/api works. |
 | Pending | Ensure npm run build --workspace @school-erp/web works. |
 | Pending | Ensure no recursive build loops exist between root and workspace scripts. |
 
@@ -146,10 +146,10 @@ Status values: Pending, In Progress, Completed, Failed.
 | Status | Task |
 | --- | --- |
 | Pending | Ensure Prisma CLI and @prisma/client versions are compatible. |
-| Pending | Ensure Prisma Client is generated during clean deployment. |
+| Completed | Ensure Prisma Client is generated during clean deployment. |
 | Pending | Ensure generated Prisma files do not need to be committed. |
-| Pending | Ensure API build does not run before Prisma Client generation. |
-| Pending | Ensure Prisma schema loads from the correct monorepo path. |
+| Completed | Ensure API build does not run before Prisma Client generation. |
+| Completed | Ensure Prisma schema loads from the correct monorepo path. |
 | Pending | Ensure Vercel build can access prisma/schema.prisma. |
 | Pending | Ensure Prisma model, enum, and namespace types are available during TypeScript build. |
 | Pending | Document local migration connection as Neon owner role direct/non-pooled URL without -pooler hostname. |
@@ -157,7 +157,7 @@ Status values: Pending, In Progress, Completed, Failed.
 | Pending | Do not hardcode database credentials. |
 | Pending | Do not commit real secrets. |
 | Pending | If schema does not use directUrl, do not require DIRECT_URL. |
-| Pending | Validate npm run prisma:generate. |
+| Completed | Validate npm run prisma:generate. |
 | Pending | Validate npm run prisma:migrate without destructive production migration behavior. |
 | Pending | Validate npm run prisma:seed without committing secrets. |
 | Pending | Do not run destructive development migrations against production. |
@@ -244,10 +244,10 @@ Status values: Pending, In Progress, Completed, Failed.
 | Pending | Run and record node --version. |
 | Pending | Run and record npm --version. |
 | Pending | Run and record npm ci --no-audit --no-fund. |
-| Pending | Run and record npm run prisma:generate. |
+| Completed | Run and record npm run prisma:generate. |
 | Pending | Run and record npm run build --workspace @school-erp/shared. |
 | Pending | Run and record npm run build --workspace @school-erp/ui. |
-| Pending | Run and record npm run build --workspace @school-erp/api. |
+| Completed | Run and record npm run build --workspace @school-erp/api. |
 | Pending | Run and record npm run build --workspace @school-erp/web. |
 | Pending | Run and record npm run typecheck --workspaces --if-present. |
 | Pending | Run and record npm run test --workspaces --if-present. |
@@ -358,8 +358,8 @@ Status values: Pending, In Progress, Completed, Failed.
 | Pending | No embedded PostgreSQL package exists. |
 | Pending | All internal workspace packages have valid runtime entries. |
 | Pending | No package main/exports points to TypeScript source. |
-| Pending | Prisma Client generates automatically. |
-| Pending | API TypeScript build succeeds. |
+| Completed | Prisma Client generates automatically. |
+| Completed | API TypeScript build succeeds. |
 | Pending | Frontend production build succeeds. |
 | Pending | Root monorepo build succeeds. |
 | Pending | Tests and typechecks succeed. |

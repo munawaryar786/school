@@ -5,11 +5,14 @@
     "moduleResolution": "Node",
     "rootDir": "src",
     "outDir": "dist",
-    "noEmit": false,
     "declaration": true,
+    "declarationMap": false,
     "sourceMap": true,
+    "noEmit": false,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
     "verbatimModuleSyntax": false
   },
-  "include": ["src"],
-  "exclude": ["dist"]
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist", "**/*.test.ts"]
 }
