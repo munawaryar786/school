@@ -34,18 +34,18 @@ export const ROLE_THEME = {
   },
   [ROLES.FINANCE_OFFICER]: {
     name: "Finance",
-    accent: "blue",
-    className: "theme-school-admin"
+    accent: "amber",
+    className: "theme-finance"
   },
   [ROLES.LIBRARIAN]: {
     name: "Library",
     accent: "teal",
-    className: "theme-academic"
+    className: "theme-library"
   },
   [ROLES.HR_OFFICER]: {
     name: "HR",
-    accent: "blue",
-    className: "theme-school-admin"
+    accent: "warm-neutral",
+    className: "theme-hr"
   }
 } satisfies Record<Role, { name: string; accent: string; className: string }>;
 
@@ -53,4 +53,3 @@ export const MODULE_THEME = {
   academic: "teal",
   security: "dark-teal"
 } as const;
-
