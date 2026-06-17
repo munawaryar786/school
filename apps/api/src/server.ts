@@ -1,7 +1,5 @@
-import { createApp } from "./app";
+import app from "./app";
 import { env } from "./config/env";
-
-const app = createApp();
 
 if (!process.env.VERCEL) {
   app.listen(env.API_PORT, () => {
@@ -11,5 +9,4 @@ if (!process.env.VERCEL) {
   });
 }
 
-export default app;
 module.exports = app;
