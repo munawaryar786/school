@@ -11,7 +11,7 @@ type ApiOne<T> = { success: true; data: T };
 const resources: Array<{ id: ResourceId; label: string; icon: any; columns: string[]; form: Row; status: string[] }> = [
   { id: "dashboard", label: "Dashboard", icon: Smartphone, columns: [], form: {}, status: [] },
   { id: "devices", label: "Devices", icon: Smartphone, columns: ["userName", "userEmail", "role", "deviceToken", "platform", "appVersion", "status", "lastSeenAt"], form: { userName: "Student User", userEmail: "student@demo-academy.local", role: "STUDENT", deviceToken: "mobile-validation-device", platform: "IOS", appVersion: "1.0.0", status: "ACTIVE", lastSeenAt: "2026-06-13" }, status: ["", "ACTIVE", "INACTIVE", "REVOKED"] },
-  { id: "sync-logs", label: "Sync Logs", icon: Activity, columns: ["userEmail", "role", "endpoint", "syncType", "recordsSynced", "status", "syncedAt", "metadata"], form: { userEmail: "student@demo-academy.local", role: "STUDENT", endpoint: "/api/v1/mobile/student/dashboard", syncType: "DASHBOARD", recordsSynced: 8, status: "SUCCESS", syncedAt: "2026-06-13" }, status: ["", "SUCCESS", "FAILED", "PARTIAL"] }
+  { id: "sync-logs", label: "Sync Logs", icon: Activity, columns: ["userEmail", "role", "endpoint", "syncType", "recordsSynced", "status", "syncedAt", "metadata"], form: { userEmail: "student@demo-academy.local", role: "STUDENT", endpoint: "/v1/mobile/student/dashboard", syncType: "DASHBOARD", recordsSynced: 8, status: "SUCCESS", syncedAt: "2026-06-13" }, status: ["", "SUCCESS", "FAILED", "PARTIAL"] }
 ];
 
 export function MobilePortal() {

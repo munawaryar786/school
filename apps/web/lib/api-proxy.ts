@@ -9,8 +9,9 @@ type RouteContext = {
 
 export function backendUrl(path: string, search = "") {
   const base = process.env.NEXT_PUBLIC_API_URL ?? defaultApiUrl;
-  const normalizedBase = base.replace(/\/+$/, "").replace(/\/api\/v1$/, "");
+  const normalizedBase = base.replace(/\/+$/, "");
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+
   return `${normalizedBase}${normalizedPath}${search}`;
 }
 
@@ -19,7 +20,7 @@ export async function proxyApiRoute(request: Request, context: RouteContext, mod
   const token = store.get("erp_access_token")?.value;
   const { path } = await context.params;
   const url = new URL(request.url);
-  const target = backendUrl(`/api/v1/${modulePath}/${path.join("/")}`, url.search);
+  const target = backendUrl(`/v1/${modulePath}/${path.join("/")}`, url.search);
   const body = ["GET", "HEAD"].includes(request.method) ? undefined : await request.text();
 
   const response = await fetch(target, {

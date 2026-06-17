@@ -7,7 +7,7 @@ export async function POST() {
   const token = store.get("erp_access_token")?.value;
 
   if (token) {
-    await fetch(backendUrl("/api/v1/auth/logout"), {
+    await fetch(backendUrl("/v1/auth/logout"), {
       method: "POST",
       headers: {
         authorization: `Bearer ${token}`

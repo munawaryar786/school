@@ -20,7 +20,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const response = await fetch(backendUrl("/api/v1/auth/login"), {
+  const response = await fetch(backendUrl("/v1/auth/login"), {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(parsed.data),

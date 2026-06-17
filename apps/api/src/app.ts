@@ -59,7 +59,7 @@ export function createApp() {
     res.status(204).end();
   });
 
-  app.get("/api/v1/health/db", async (_req, res, next) => {
+  app.get("/v1/health/db", async (_req, res, next) => {
     try {
       await prisma.$queryRaw`SELECT 1`;
       res.json({ status: "ok" });
@@ -68,32 +68,32 @@ export function createApp() {
     }
   });
 
-  app.use("/api/v1/auth", authRoutes);
-  app.use("/api/v1/super-admin", superAdminRoutes);
-  app.use("/api/v1/school-admin", schoolAdminRoutes);
-  app.use("/api/v1/teacher", teacherRoutes);
-  app.use("/api/v1/student", studentRoutes);
-  app.use("/api/v1/parent", parentRoutes);
-  app.use("/api/v1/admissions", admissionsRoutes);
-  app.use("/api/v1/academic", academicRoutes);
-  app.use("/api/v1/attendance", attendanceRoutes);
-  app.use("/api/v1/examination", examinationRoutes);
-  app.use("/api/v1/lms", lmsRoutes);
-  app.use("/api/v1/finance", financeRoutes);
-  app.use("/api/v1/advanced-finance", advancedFinanceRoutes);
-  app.use("/api/v1/hr", hrRoutes);
-  app.use("/api/v1/library", libraryRoutes);
-  app.use("/api/v1/communication", communicationRoutes);
-  app.use("/api/v1/reports", reportsRoutes);
-  app.use("/api/v1/documents", documentsRoutes);
-  app.use("/api/v1/certificates", certificatesRoutes);
-  app.use("/api/v1/meetings", meetingsRoutes);
-  app.use("/api/v1/cms", cmsRoutes);
-  app.use("/api/v1/mobile", mobileRoutes);
-  app.use("/api/v1/security", securityRoutes);
-  app.use("/api/v1/production-readiness", productionReadinessRoutes);
+  app.use("/v1/auth", authRoutes);
+  app.use("/v1/super-admin", superAdminRoutes);
+  app.use("/v1/school-admin", schoolAdminRoutes);
+  app.use("/v1/teacher", teacherRoutes);
+  app.use("/v1/student", studentRoutes);
+  app.use("/v1/parent", parentRoutes);
+  app.use("/v1/admissions", admissionsRoutes);
+  app.use("/v1/academic", academicRoutes);
+  app.use("/v1/attendance", attendanceRoutes);
+  app.use("/v1/examination", examinationRoutes);
+  app.use("/v1/lms", lmsRoutes);
+  app.use("/v1/finance", financeRoutes);
+  app.use("/v1/advanced-finance", advancedFinanceRoutes);
+  app.use("/v1/hr", hrRoutes);
+  app.use("/v1/library", libraryRoutes);
+  app.use("/v1/communication", communicationRoutes);
+  app.use("/v1/reports", reportsRoutes);
+  app.use("/v1/documents", documentsRoutes);
+  app.use("/v1/certificates", certificatesRoutes);
+  app.use("/v1/meetings", meetingsRoutes);
+  app.use("/v1/cms", cmsRoutes);
+  app.use("/v1/mobile", mobileRoutes);
+  app.use("/v1/security", securityRoutes);
+  app.use("/v1/production-readiness", productionReadinessRoutes);
   app.use((_req, res) => {
-    res.status(404).json({
+   return res.status(404).json({
       success: false,
       error: {
         code: "NOT_FOUND",
