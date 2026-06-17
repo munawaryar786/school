@@ -9,7 +9,7 @@
   },
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "build": "npm run prisma:generate && tsc -p tsconfig.json",
+    "build": "npm --prefix ../.. run build --workspace @school-erp/shared && npm run prisma:generate && tsc -p tsconfig.json",
     "prisma:generate": "prisma generate --schema=../../prisma/schema.prisma",
     "start": "node dist/server.js",
     "test": "node --import tsx --test \"src/**/*.test.ts\"",
