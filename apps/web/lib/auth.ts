@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 import { ROLE_THEME, ROLES, type Role } from "@school-erp/shared";
+import { homePathForRole } from "./role-routes";
 
 export type Session = {
   token: string;
@@ -28,21 +29,9 @@ export async function getSession(): Promise<Session | null> {
 }
 
 export function dashboardPathFor(role: Role) {
-  const routes: Record<Role, string> = {
-    [ROLES.SUPER_ADMIN]: "/super-admin",
-    [ROLES.SCHOOL_ADMIN]: "/school-admin",
-    [ROLES.TEACHER]: "/teacher",
-    [ROLES.STUDENT]: "/student",
-    [ROLES.PARENT]: "/parent",
-    [ROLES.STAFF]: "/school-admin",
-    [ROLES.FINANCE_OFFICER]: "/school-admin",
-    [ROLES.LIBRARIAN]: "/school-admin",
-    [ROLES.HR_OFFICER]: "/school-admin"
-  };
-  return routes[role];
+  return homePathForRole(role);
 }
 
 export function themeFor(role: Role) {
   return ROLE_THEME[role];
 }
-

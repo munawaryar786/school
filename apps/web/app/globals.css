@@ -40,6 +40,18 @@
   --primary: 174 72% 33%;
 }
 
+.theme-finance {
+  --primary: 38 92% 44%;
+}
+
+.theme-library {
+  --primary: 174 72% 33%;
+}
+
+.theme-hr {
+  --primary: 30 28% 38%;
+}
+
 .theme-security {
   --primary: 181 72% 19%;
 }
@@ -71,4 +83,3 @@ textarea {
   outline: none;
   box-shadow: 0 0 0 3px hsl(var(--primary) / 0.24);
 }
-

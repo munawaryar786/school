@@ -7,7 +7,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit --incremental false",
+    "test": "node --experimental-strip-types lib/role-routes.test.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

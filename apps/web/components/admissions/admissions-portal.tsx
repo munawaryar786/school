@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ClipboardList, Download, FileCheck2, FileText, GraduationCap, Loader2, RefreshCw, Save, Search, Trash2, UserPlus } from "lucide-react";
+import { ClipboardList, Download, FileCheck2, FileText, GraduationCap, Loader2, Pencil, RefreshCw, Save, Search, Trash2, UserPlus, X } from "lucide-react";
 
 type ResourceId = "dashboard" | "applications" | "enrollments" | "documents" | "reports";
 type Row = Record<string, any>;
@@ -116,22 +116,47 @@ function Toolbar({ active, search, setSearch, status, setStatus }: { active: (ty
 
 function CrudPanel({ active, search, status, page, setPage, refreshKey, onDone }: { active: (typeof resources)[number]; search: string; status: string; page: number; setPage: (page: number) => void; refreshKey: number; onDone: (message: string) => void }) {
   const [form, setForm] = useState<Row>(active.form);
+  const [editing, setEditing] = useState<Row | null>(null);
   const { data, loading, error } = useList(active.id, search, status, page, refreshKey);
-  useEffect(() => setForm(active.form), [active.id]);
-  async function submit() {
-    await api(active.id, { method: "POST", body: JSON.stringify(coerceForm(form)) });
+  useEffect(() => {
     setForm(active.form);
-    onDone(`${active.label} record saved.`);
+    setEditing(null);
+  }, [active.id]);
+  async function submit() {
+    const body = JSON.stringify(coerceForm(form));
+    if (editing?.id) {
+      await api(`${active.id}/${editing.id}`, { method: "PATCH", body });
+      setEditing(null);
+      setForm(active.form);
+      onDone(`${active.label} record updated.`);
+      return;
+    }
+    await api(active.id, { method: "POST", body });
+    setForm(active.form);
+    onDone(`${active.label} record created.`);
+  }
+  function startEdit(row: Row) {
+    setEditing(row);
+    setForm(formFromRow(active.form, row));
+  }
+  function cancelEdit() {
+    setEditing(null);
+    setForm(active.form);
   }
   return (
     <div className="grid gap-4 xl:grid-cols-[360px_1fr]">
-      <FormPanel title={`Create ${active.label}`} form={form} setForm={setForm} onSubmit={submit} />
-      <DataTable active={active} data={data?.data ?? []} loading={loading} error={error} pagination={data?.pagination} setPage={setPage} onDelete={async (row) => { await api(`${active.id}/${row.id}`, { method: "DELETE" }); onDone(`${active.label} record deleted.`); }} />
+      <FormPanel title={editing ? `Edit ${active.label}` : `Create ${active.label}`} form={form} setForm={setForm} onSubmit={submit} submitLabel={editing ? "Update" : "Save"} onCancel={editing ? cancelEdit : undefined} />
+      <DataTable active={active} data={data?.data ?? []} loading={loading} error={error} pagination={data?.pagination} setPage={setPage} onEdit={startEdit} onDelete={async (row) => {
+        if (!window.confirm(`Delete this ${active.label.toLowerCase()} record? This action cannot be undone.`)) return;
+        await api(`${active.id}/${row.id}`, { method: "DELETE" });
+        if (editing?.id === row.id) cancelEdit();
+        onDone(`${active.label} record deleted.`);
+      }} />
     </div>
   );
 }
 
-function FormPanel({ title, form, setForm, onSubmit }: { title: string; form: Row; setForm: (form: Row) => void; onSubmit: () => Promise<void> }) {
+function FormPanel({ title, form, setForm, onSubmit, submitLabel, onCancel }: { title: string; form: Row; setForm: (form: Row) => void; onSubmit: () => Promise<void>; submitLabel: string; onCancel?: () => void }) {
   const [saving, setSaving] = useState(false);
   return (
     <section className="rounded-lg border border-border bg-surface p-4 shadow-sm">
@@ -148,15 +173,23 @@ function FormPanel({ title, form, setForm, onSubmit }: { title: string; form: Ro
           </label>
         ))}
       </div>
-      <button className="mt-4 inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-semibold text-primary-foreground disabled:opacity-65" disabled={saving} onClick={async () => { setSaving(true); try { await onSubmit(); } finally { setSaving(false); } }}>
-        {saving ? <Loader2 aria-hidden={true} className="animate-spin" size={16} /> : <Save aria-hidden={true} size={16} />}
-        Save
-      </button>
+      <div className="mt-4 grid gap-2">
+        <button className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-semibold text-primary-foreground disabled:opacity-65" disabled={saving} onClick={async () => { setSaving(true); try { await onSubmit(); } finally { setSaving(false); } }}>
+          {saving ? <Loader2 aria-hidden={true} className="animate-spin" size={16} /> : <Save aria-hidden={true} size={16} />}
+          {submitLabel}
+        </button>
+        {onCancel ? (
+          <button className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md border border-border bg-background px-4 text-sm font-medium text-muted-foreground" type="button" onClick={onCancel}>
+            <X aria-hidden={true} size={16} />
+            Cancel edit
+          </button>
+        ) : null}
+      </div>
     </section>
   );
 }
 
-function DataTable({ active, data, loading, error, pagination, setPage, onDelete }: { active: (typeof resources)[number]; data: Row[]; loading: boolean; error: string | null; pagination?: { page: number; totalPages: number; total: number }; setPage: (page: number) => void; onDelete: (row: Row) => Promise<void> }) {
+function DataTable({ active, data, loading, error, pagination, setPage, onEdit, onDelete }: { active: (typeof resources)[number]; data: Row[]; loading: boolean; error: string | null; pagination?: { page: number; totalPages: number; total: number }; setPage: (page: number) => void; onEdit: (row: Row) => void; onDelete: (row: Row) => Promise<void> }) {
   return (
     <section className="overflow-hidden rounded-lg border border-border bg-surface shadow-sm">
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
@@ -174,7 +207,14 @@ function DataTable({ active, data, loading, error, pagination, setPage, onDelete
                 <tr key={row.id}>
                   {active.columns.map((column) => <td key={column} className="px-4 py-3">{formatValue(row[column])}</td>)}
                   <td className="px-4 py-3 text-right">
-                    <button className="inline-flex rounded-md border border-border p-2 text-danger" onClick={() => onDelete(row)} aria-label="Delete"><Trash2 aria-hidden={true} size={14} /></button>
+                    <div className="inline-flex gap-2">
+                      <button className="inline-flex rounded-md border border-border p-2 text-muted-foreground hover:text-foreground" onClick={() => onEdit(row)} aria-label={`Edit ${active.label} record`}>
+                        <Pencil aria-hidden={true} size={14} />
+                      </button>
+                      <button className="inline-flex rounded-md border border-border p-2 text-danger" onClick={() => onDelete(row)} aria-label={`Delete ${active.label} record`}>
+                        <Trash2 aria-hidden={true} size={14} />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -244,6 +284,17 @@ function coerceForm(form: Row) {
     if (key === "value") return [key, Number(value)];
     return [key, value];
   }));
+}
+
+function formFromRow(form: Row, row: Row) {
+  return Object.fromEntries(Object.keys(form).map((key) => [key, formatInputValue(row[key])]));
+}
+
+function formatInputValue(value: unknown) {
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}T/.test(value)) return value.slice(0, 10);
+  if (value === null || value === undefined) return "";
+  return value;
 }
 
 function formatValue(value: unknown) {

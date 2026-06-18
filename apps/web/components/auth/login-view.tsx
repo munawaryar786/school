@@ -5,19 +5,8 @@ import { ArrowRight, Building2, LockKeyhole, Mail } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
-import { loginSchema, ROLES, type ApiResponse, type LoginInput, type LoginResult } from "@school-erp/shared";
-
-const rolePath = {
-  [ROLES.SUPER_ADMIN]: "/super-admin",
-  [ROLES.SCHOOL_ADMIN]: "/school-admin",
-  [ROLES.TEACHER]: "/teacher",
-  [ROLES.STUDENT]: "/student",
-  [ROLES.PARENT]: "/parent",
-  [ROLES.STAFF]: "/school-admin",
-  [ROLES.FINANCE_OFFICER]: "/school-admin",
-  [ROLES.LIBRARIAN]: "/school-admin",
-  [ROLES.HR_OFFICER]: "/school-admin"
-};
+import { loginSchema, type ApiResponse, type LoginInput, type LoginResult } from "@school-erp/shared";
+import { homePathForRole } from "../../lib/role-routes";
 
 export function LoginView() {
   const router = useRouter();
@@ -54,7 +43,7 @@ export function LoginView() {
     }
 
     const next = searchParams.get("next");
-    router.replace(next || rolePath[payload.data.user.activeRole]);
+    router.replace(next || homePathForRole(payload.data.user.activeRole));
     router.refresh();
   }
 
@@ -156,4 +145,3 @@ export function LoginView() {
     </main>
   );
 }
-
