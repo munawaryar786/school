@@ -12,6 +12,7 @@ export async function POST() {
       headers: {
         authorization: `Bearer ${token}`
       },
+      
       cache: "no-store"
     }).catch(() => undefined);
   }

@@ -1,69 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { ROLES, type Role } from "@school-erp/shared";
-
-const protectedPrefixes = [
-  "/super-admin",
-  "/school-admin",
-  "/admissions",
-  "/academic",
-  "/attendance",
-  "/examination",
-  "/lms",
-  "/finance",
-  "/advanced-finance",
-  "/hr",
-  "/library",
-  "/communication",
-  "/reports",
-  "/documents",
-  "/certificates",
-  "/meetings",
-  "/cms",
-  "/mobile",
-  "/security",
-  "/production-readiness",
-  "/teacher",
-  "/student",
-  "/parent"
-] as const;
-
-const roleRoute: Record<Role, string> = {
-  [ROLES.SUPER_ADMIN]: "/super-admin",
-  [ROLES.SCHOOL_ADMIN]: "/school-admin",
-  [ROLES.TEACHER]: "/teacher",
-  [ROLES.STUDENT]: "/student",
-  [ROLES.PARENT]: "/parent",
-  [ROLES.STAFF]: "/school-admin",
-  [ROLES.FINANCE_OFFICER]: "/finance",
-  [ROLES.LIBRARIAN]: "/library",
-  [ROLES.HR_OFFICER]: "/hr"
-};
-
-const routeRole: Record<string, Role[]> = {
-  "/super-admin": [ROLES.SUPER_ADMIN],
-  "/school-admin": [ROLES.SCHOOL_ADMIN, ROLES.STAFF, ROLES.FINANCE_OFFICER, ROLES.LIBRARIAN, ROLES.HR_OFFICER],
-  "/admissions": [ROLES.SCHOOL_ADMIN, ROLES.STAFF],
-  "/academic": [ROLES.SCHOOL_ADMIN, ROLES.STAFF],
-  "/attendance": [ROLES.SCHOOL_ADMIN, ROLES.STAFF, ROLES.HR_OFFICER],
-  "/examination": [ROLES.SCHOOL_ADMIN, ROLES.STAFF, ROLES.TEACHER],
-  "/lms": [ROLES.SCHOOL_ADMIN, ROLES.STAFF, ROLES.TEACHER, ROLES.STUDENT],
-  "/finance": [ROLES.SCHOOL_ADMIN, ROLES.FINANCE_OFFICER],
-  "/advanced-finance": [ROLES.SCHOOL_ADMIN, ROLES.FINANCE_OFFICER],
-  "/hr": [ROLES.SCHOOL_ADMIN, ROLES.HR_OFFICER],
-  "/library": [ROLES.SCHOOL_ADMIN, ROLES.LIBRARIAN],
-  "/communication": [ROLES.SCHOOL_ADMIN, ROLES.STAFF, ROLES.TEACHER],
-  "/reports": [ROLES.SCHOOL_ADMIN, ROLES.STAFF, ROLES.FINANCE_OFFICER, ROLES.HR_OFFICER],
-  "/documents": [ROLES.SCHOOL_ADMIN, ROLES.STAFF, ROLES.HR_OFFICER],
-  "/certificates": [ROLES.SCHOOL_ADMIN, ROLES.STAFF],
-  "/meetings": [ROLES.SCHOOL_ADMIN, ROLES.STAFF, ROLES.TEACHER],
-  "/cms": [ROLES.SCHOOL_ADMIN, ROLES.STAFF],
-  "/mobile": [ROLES.SCHOOL_ADMIN, ROLES.STAFF],
-  "/security": [ROLES.SUPER_ADMIN, ROLES.SCHOOL_ADMIN],
-  "/production-readiness": [ROLES.SUPER_ADMIN, ROLES.SCHOOL_ADMIN],
-  "/teacher": [ROLES.TEACHER],
-  "/student": [ROLES.STUDENT],
-  "/parent": [ROLES.PARENT]
-};
+import type { Role } from "@school-erp/shared";
+import { homePathForRole } from "./lib/role-routes";
+import { canAccessRoute, findProtectedPrefix } from "./lib/route-policy";
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -72,17 +10,17 @@ export function middleware(request: NextRequest) {
 
   if (pathname === "/") {
     const url = request.nextUrl.clone();
-    url.pathname = token && role ? roleRoute[role] : "/login";
+    url.pathname = token && role ? homePathForRole(role) : "/login";
     return NextResponse.redirect(url);
   }
 
   if (pathname === "/login" && token && role) {
     const url = request.nextUrl.clone();
-    url.pathname = roleRoute[role];
+    url.pathname = homePathForRole(role);
     return NextResponse.redirect(url);
   }
 
-  const matchedPrefix = protectedPrefixes.find((prefix) => pathname.startsWith(prefix));
+  const matchedPrefix = findProtectedPrefix(pathname);
   if (!matchedPrefix) {
     return NextResponse.next();
   }
@@ -94,7 +32,7 @@ export function middleware(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  if (!routeRole[matchedPrefix].includes(role)) {
+  if (!canAccessRoute(role, pathname)) {
     const url = request.nextUrl.clone();
     url.pathname = "/unauthorized";
     return NextResponse.redirect(url);
