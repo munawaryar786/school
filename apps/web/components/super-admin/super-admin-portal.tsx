@@ -2,11 +2,16 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { ArchiveRestore, Building2, Download, FileClock, Landmark, Loader2, Plus, RefreshCw, Save, Search, Settings, ShieldCheck, Trash2, UserCog, Users } from "lucide-react";
+import { createSchoolSchema, type CreateSchoolInput } from "@school-erp/shared";
 
 type ApiList<T> = { success: true; data: T[]; pagination?: { page: number; pageSize: number; total: number; totalPages: number } };
 type ApiOne<T> = { success: true; data: T };
 
 type Row = Record<string, any>;
+type FieldErrors<T extends Record<string, unknown>> = Partial<Record<keyof T, string>>;
+
+const schoolStatuses = ["TRIAL", "ACTIVE", "SUSPENDED", "ARCHIVED"] as const;
+const emptySchoolForm: CreateSchoolInput = { name: "", slug: "", status: "TRIAL", email: "", phone: "", address: "", website: "" };
 
 const sections = [
   { id: "schools", label: "Schools", icon: Building2 },
@@ -106,7 +111,7 @@ function Toolbar({ section, search, setSearch, status, setStatus, onExport }: { 
 }
 
 function SectionBody({ section, search, status, page, setPage, refreshKey, onDone }: { section: SectionId; search: string; status: string; page: number; setPage: (page: number) => void; refreshKey: number; onDone: (message: string) => void }) {
-  if (section === "schools") return <CrudSection title="Schools" endpoint="schools" columns={["name", "slug", "status", "email", "phone"]} emptyForm={{ name: "", slug: "", status: "TRIAL", email: "", phone: "", address: "", website: "" }} search={search} status={status} page={page} setPage={setPage} refreshKey={refreshKey} onDone={onDone} />;
+  if (section === "schools") return <SchoolsSection search={search} status={status} page={page} setPage={setPage} refreshKey={refreshKey} onDone={onDone} />;
   if (section === "administrators") return <CrudSection title="Administrators" endpoint="administrators" columns={["name", "email", "schoolName", "status"]} emptyForm={{ schoolId: "", name: "", email: "", password: "Password123!", status: "ACTIVE" }} search={search} status={status} page={page} setPage={setPage} refreshKey={refreshKey} onDone={onDone} />;
   if (section === "subscriptions") return <SubscriptionsSection search={search} status={status} page={page} setPage={setPage} refreshKey={refreshKey} onDone={onDone} />;
   if (section === "revenue") return <ReadOnlySection title="Revenue Reports" endpoint="revenue" columns={["schoolName", "planName", "status", "amount", "currency", "periodStart"]} search={search} page={page} setPage={setPage} refreshKey={refreshKey} />;
@@ -114,6 +119,104 @@ function SectionBody({ section, search, status, page, setPage, refreshKey, onDon
   if (section === "audit-logs") return <ReadOnlySection title="Audit Logs" endpoint="audit-logs" columns={["action", "resource", "resourceId", "createdAt"]} search={search} page={page} setPage={setPage} refreshKey={refreshKey} />;
   if (section === "settings") return <SettingsSection onDone={onDone} refreshKey={refreshKey} />;
   return <BackupsSection onDone={onDone} refreshKey={refreshKey} />;
+}
+
+function SchoolsSection({ search, status, page, setPage, refreshKey, onDone }: { search: string; status: string; page: number; setPage: (page: number) => void; refreshKey: number; onDone: (message: string) => void }) {
+  const [form, setForm] = useState<CreateSchoolInput>(emptySchoolForm);
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors<CreateSchoolInput>>({});
+  const [summaryError, setSummaryError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const { data, loading, error } = useList("schools", search, status, page, refreshKey);
+
+  function updateField<K extends keyof CreateSchoolInput>(key: K, value: CreateSchoolInput[K]) {
+    setForm((current) => ({ ...current, [key]: value }));
+    setFieldErrors((current) => ({ ...current, [key]: undefined }));
+    setSummaryError(null);
+  }
+
+  async function submit() {
+    const parsed = createSchoolSchema.safeParse(form);
+    if (!parsed.success) {
+      const errors = parsed.error.flatten().fieldErrors;
+      setFieldErrors(Object.fromEntries(Object.entries(errors).map(([key, messages]) => [key, messages?.[0]])) as FieldErrors<CreateSchoolInput>);
+      setSummaryError("Fix the highlighted fields before creating the school.");
+      return;
+    }
+
+    setSaving(true);
+    setSummaryError(null);
+    try {
+      await api("schools", { method: "POST", body: JSON.stringify(parsed.data) });
+      setForm(emptySchoolForm);
+      setFieldErrors({});
+      onDone("School created successfully.");
+    } catch (caught) {
+      const apiError = caught instanceof Error ? caught : new Error("Request failed.");
+      setSummaryError(apiError.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="grid gap-4 xl:grid-cols-[380px_1fr]">
+      <section className="rounded-lg border border-border bg-surface p-4 shadow-panel">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-base font-semibold">Create School</h2>
+            <p className="mt-1 text-sm text-muted-foreground">Creates a tenant record through `/api/super-admin/schools` with server-side permission checks and audit logging.</p>
+          </div>
+          <Building2 aria-hidden={true} className="mt-1 shrink-0 text-primary" size={20} />
+        </div>
+
+        {summaryError ? (
+          <div className="mt-4 rounded-md border border-error/30 bg-error/10 px-3 py-2 text-sm text-error" role="alert">
+            {summaryError}
+          </div>
+        ) : null}
+
+        <div className="mt-4 space-y-3">
+          <TextField label="School name" value={form.name} error={fieldErrors.name} onChange={(value) => updateField("name", value)} onBlur={() => { if (!form.slug && form.name) updateField("slug", slugify(form.name)); }} />
+          <TextField label="Slug" value={form.slug} error={fieldErrors.slug} helper="Lowercase letters, numbers, and hyphens only." onChange={(value) => updateField("slug", slugify(value))} />
+          <label className="block">
+            <span className="mb-1 block text-sm font-medium">Status</span>
+            <select className="h-11 w-full rounded-md border border-border bg-background px-3 text-sm" value={form.status} onChange={(event) => updateField("status", event.target.value as CreateSchoolInput["status"])}>
+              {schoolStatuses.map((item) => <option key={item} value={item}>{item}</option>)}
+            </select>
+            {fieldErrors.status ? <span className="mt-1 block text-sm text-error">{fieldErrors.status}</span> : null}
+          </label>
+          <TextField label="Email" value={form.email ?? ""} error={fieldErrors.email} inputMode="email" onChange={(value) => updateField("email", value)} />
+          <TextField label="Phone" value={form.phone ?? ""} error={fieldErrors.phone} inputMode="tel" onChange={(value) => updateField("phone", value)} />
+          <TextField label="Website" value={form.website ?? ""} error={fieldErrors.website} inputMode="url" placeholder="https://example.edu" onChange={(value) => updateField("website", value)} />
+          <label className="block">
+            <span className="mb-1 block text-sm font-medium">Address</span>
+            <textarea className="min-h-24 w-full rounded-md border border-border bg-background px-3 py-2 text-sm" value={form.address ?? ""} onChange={(event) => updateField("address", event.target.value)} />
+            {fieldErrors.address ? <span className="mt-1 block text-sm text-error">{fieldErrors.address}</span> : null}
+          </label>
+        </div>
+
+        <button className="mt-4 inline-flex h-11 w-full items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-semibold text-primary-foreground disabled:cursor-not-allowed disabled:opacity-65" disabled={saving} onClick={submit} type="button">
+          {saving ? <Loader2 aria-hidden={true} className="animate-spin" size={16} /> : <Save aria-hidden={true} size={16} />}
+          Create school
+        </button>
+      </section>
+
+      <DataTable
+        title="Schools"
+        columns={["name", "slug", "status", "email", "phone"]}
+        data={data?.data ?? []}
+        loading={loading}
+        error={error}
+        pagination={data?.pagination}
+        setPage={setPage}
+        onDelete={async (row) => {
+          if (!window.confirm(`Archive ${row.name ?? "this school"}? This keeps history but removes it from active school lists.`)) return;
+          await api(`schools/${row.id}`, { method: "DELETE" });
+          onDone("School archived.");
+        }}
+      />
+    </div>
+  );
 }
 
 function CrudSection({ title, endpoint, columns, emptyForm, search, status, page, setPage, refreshKey, onDone }: { title: string; endpoint: string; columns: string[]; emptyForm: Row; search: string; status: string; page: number; setPage: (page: number) => void; refreshKey: number; onDone: (message: string) => void }) {
@@ -219,6 +322,48 @@ function FormPanel({ title, form, setForm, onSubmit }: { title: string; form: Ro
   );
 }
 
+function TextField({
+  label,
+  value,
+  error,
+  helper,
+  placeholder,
+  inputMode,
+  onChange,
+  onBlur
+}: {
+  label: string;
+  value: string;
+  error?: string;
+  helper?: string;
+  placeholder?: string;
+  inputMode?: React.HTMLAttributes<HTMLInputElement>["inputMode"];
+  onChange: (value: string) => void;
+  onBlur?: () => void;
+}) {
+  const id = useMemo(() => `field-${label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`, [label]);
+  const errorId = `${id}-error`;
+  const helperId = `${id}-helper`;
+  return (
+    <label className="block" htmlFor={id}>
+      <span className="mb-1 block text-sm font-medium">{label}</span>
+      <input
+        id={id}
+        className={`h-11 w-full rounded-md border bg-background px-3 text-sm ${error ? "border-error" : "border-border"}`}
+        value={value}
+        placeholder={placeholder}
+        inputMode={inputMode}
+        aria-invalid={Boolean(error)}
+        aria-describedby={error ? errorId : helper ? helperId : undefined}
+        onBlur={onBlur}
+        onChange={(event) => onChange(event.target.value)}
+      />
+      {helper && !error ? <span id={helperId} className="mt-1 block text-xs text-muted-foreground">{helper}</span> : null}
+      {error ? <span id={errorId} className="mt-1 block text-sm text-error">{error}</span> : null}
+    </label>
+  );
+}
+
 function DataTable({ title, columns, data, loading, error, pagination, setPage, onDelete, onRestore }: { title: string; columns: string[]; data: Row[]; loading: boolean; error: string | null; pagination?: { page: number; totalPages: number; total: number }; setPage?: (page: number) => void; onDelete?: (row: Row) => Promise<void>; onRestore?: (row: Row) => Promise<void> }) {
   return (
     <section className="overflow-hidden rounded-lg border border-border bg-surface shadow-sm">
@@ -270,6 +415,7 @@ function useList(endpoint: string, search: string, status: string, page: number,
     if (search) params.set("search", search);
     if (status) params.set("status", status);
     setLoading(true);
+    setError(null);
     api(`${endpoint}?${params.toString()}`)
       .then(setData)
       .catch((caught) => setError(caught.message))
@@ -284,6 +430,7 @@ function useSimpleList(endpoint: string, refreshKey: number) {
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     setLoading(true);
+    setError(null);
     api(endpoint).then(setData).catch((caught) => setError(caught.message)).finally(() => setLoading(false));
   }, [endpoint, refreshKey]);
   return { data, loading, error };
@@ -312,6 +459,14 @@ function coerceForm(form: Row) {
   }));
 }
 
+function slugify(value: string) {
+  return value
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
 function parseSettingValue(value: unknown) {
   if (typeof value !== "string") return value;
   try {
@@ -328,4 +483,3 @@ function formatValue(value: unknown) {
   const text = String(value);
   return text.length > 80 ? `${text.slice(0, 77)}...` : text;
 }
-

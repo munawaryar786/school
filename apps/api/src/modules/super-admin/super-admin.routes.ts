@@ -6,7 +6,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { Prisma, RoleCode } from "@prisma/client";
-import { PERMISSIONS } from "@school-erp/shared";
+import { createSchoolSchema, PERMISSIONS, updateSchoolSchema } from "@school-erp/shared";
 import { prisma } from "../../db/prisma";
 import { ok, fail } from "../../http/responses";
 import { authenticate, requirePermission } from "../auth/auth.middleware";
@@ -21,16 +21,6 @@ const pageQuerySchema = z.object({
   search: z.string().optional(),
   status: z.string().optional(),
   format: z.enum(["json", "csv"]).default("json")
-});
-
-const schoolSchema = z.object({
-  name: z.string().trim().min(2),
-  slug: z.string().trim().min(2).regex(/^[a-z0-9-]+$/),
-  status: z.enum(["ACTIVE", "TRIAL", "SUSPENDED", "ARCHIVED"]).default("TRIAL"),
-  email: z.string().trim().email().optional().or(z.literal("")),
-  phone: z.string().trim().optional(),
-  address: z.string().trim().optional(),
-  website: z.string().trim().url().optional().or(z.literal(""))
 });
 
 const administratorSchema = z.object({
@@ -140,7 +130,7 @@ router.get("/schools", requirePermission(PERMISSIONS.SCHOOLS_READ), async (req, 
 
 router.post("/schools", requirePermission(PERMISSIONS.SCHOOLS_CREATE), async (req, res, next) => {
   try {
-    const data = normalizeSchool(schoolSchema.parse(req.body));
+    const data = normalizeSchool(createSchoolSchema.parse(req.body));
     const school = await prisma.school.create({ data });
     await writeAudit(req, "CREATE", "school", school.id, { name: school.name });
     return ok(res, school, 201);
@@ -152,7 +142,7 @@ router.post("/schools", requirePermission(PERMISSIONS.SCHOOLS_CREATE), async (re
 
 router.patch("/schools/:id", requirePermission(PERMISSIONS.SCHOOLS_UPDATE), async (req, res, next) => {
   try {
-    const data = normalizeSchool(schoolSchema.partial().parse(req.body));
+    const data = normalizeSchool(updateSchoolSchema.parse(req.body));
     const school = await prisma.school.update({ where: { id: routeId(req) }, data });
     await writeAudit(req, "UPDATE", "school", school.id, data);
     return ok(res, school);

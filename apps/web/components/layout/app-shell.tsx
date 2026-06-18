@@ -1,5 +1,40 @@
+"use client";
+
 import Link from "next/link";
-import { Archive, Award, BarChart3, BookOpenCheck, BriefcaseBusiness, CalendarDays, ClipboardList, CreditCard, FileSpreadsheet, Globe2, GraduationCap, Home, Library, LogOut, Megaphone, Rocket, Settings, ShieldCheck, Smartphone, Users } from "lucide-react";
+import { usePathname } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
+import {
+  Archive,
+  Award,
+  BarChart3,
+  Bell,
+  BookOpenCheck,
+  BriefcaseBusiness,
+  CalendarDays,
+  Check,
+  ChevronDown,
+  ClipboardList,
+  CreditCard,
+  FileSpreadsheet,
+  Globe2,
+  GraduationCap,
+  Home,
+  Library,
+  LogOut,
+  Megaphone,
+  Menu,
+  Moon,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Rocket,
+  Search,
+  Settings,
+  ShieldCheck,
+  Smartphone,
+  Sun,
+  Users,
+  X
+} from "lucide-react";
 import { ROLE_THEME, ROLES, type Role } from "@school-erp/shared";
 import { cn } from "@school-erp/ui";
 import { LogoutButton } from "./logout-button";
@@ -7,8 +42,10 @@ import { LogoutButton } from "./logout-button";
 type NavItem = {
   label: string;
   href: string;
-  icon: React.ComponentType<{ size?: number; "aria-hidden"?: boolean }>;
+  icon: React.ComponentType<{ size?: number; "aria-hidden"?: boolean; className?: string }>;
 };
+
+type ThemePreference = "light" | "dark" | "system";
 
 const navByRole: Record<Role, NavItem[]> = {
   [ROLES.SUPER_ADMIN]: [
@@ -99,50 +136,275 @@ export function AppShell({
   name: string;
   children: React.ReactNode;
 }) {
+  const pathname = usePathname();
   const theme = ROLE_THEME[role];
   const nav = navByRole[role];
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [themePreference, setThemePreference] = useState<ThemePreference>("system");
+  const breadcrumbs = useMemo(() => buildBreadcrumbs(pathname), [pathname]);
+
+  useEffect(() => {
+    const stored = window.localStorage.getItem("erp-theme") as ThemePreference | null;
+    if (stored === "light" || stored === "dark" || stored === "system") {
+      setThemePreference(stored);
+    }
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem("erp-theme", themePreference);
+  }, [themePreference]);
 
   return (
-    <div className={cn("min-h-screen", theme.className)}>
-      <div className="grid min-h-screen lg:grid-cols-[280px_1fr]">
-        <aside className="border-r border-border bg-surface px-5 py-5">
+    <div className={cn("min-h-screen bg-background text-foreground", theme.className, themePreference === "dark" ? "theme-dark" : themePreference === "system" ? "theme-system" : "theme-light")}>
+      <a className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-surface focus:px-4 focus:py-2 focus:text-sm focus:shadow-popover" href="#main-content">
+        Skip to main content
+      </a>
+
+      <div className={cn("min-h-screen lg:grid", sidebarCollapsed ? "lg:grid-cols-[84px_1fr]" : "lg:grid-cols-[280px_1fr]")}>
+        <Sidebar roleName={theme.name} name={name} nav={nav} pathname={pathname} collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed((value) => !value)} />
+
+        <div className="min-w-0">
+          <Topbar
+            roleName={theme.name}
+            name={name}
+            breadcrumbs={breadcrumbs}
+            themePreference={themePreference}
+            setThemePreference={setThemePreference}
+            onOpenMobile={() => setMobileOpen(true)}
+          />
+
+          <main id="main-content" className="min-w-0 px-4 py-5 sm:px-6 lg:px-8">
+            <div className="mx-auto grid max-w-7xl grid-cols-1 gap-5 lg:grid-cols-12">
+              <div className="min-w-0 lg:col-span-12">{children}</div>
+            </div>
+          </main>
+        </div>
+      </div>
+
+      <MobileNav open={mobileOpen} onClose={() => setMobileOpen(false)} roleName={theme.name} name={name} nav={nav} pathname={pathname} />
+    </div>
+  );
+}
+
+function Sidebar({
+  roleName,
+  name,
+  nav,
+  pathname,
+  collapsed,
+  onToggle
+}: {
+  roleName: string;
+  name: string;
+  nav: NavItem[];
+  pathname: string;
+  collapsed: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <aside className="sticky top-0 hidden h-screen border-r border-border bg-surface px-4 py-4 lg:block">
+      <div className={cn("flex items-center gap-3", collapsed && "justify-center")}>
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
+          <GraduationCap aria-hidden="true" size={22} />
+        </div>
+        {!collapsed ? (
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold">School ERP</p>
+            <p className="truncate text-xs text-muted-foreground">{roleName}</p>
+          </div>
+        ) : null}
+      </div>
+
+      <button className={cn("mt-5 flex h-11 items-center justify-center gap-2 rounded-md border border-border bg-background px-3 text-sm", collapsed ? "w-full" : "w-full")} onClick={onToggle} type="button">
+        {collapsed ? <PanelLeftOpen aria-hidden={true} size={17} /> : <PanelLeftClose aria-hidden={true} size={17} />}
+        {!collapsed ? "Collapse" : <span className="sr-only">Expand sidebar</span>}
+      </button>
+
+      <nav className="mt-5 space-y-1 overflow-y-auto pb-4" aria-label={`${roleName} navigation`}>
+        {nav.map((item) => (
+          <NavLink key={item.label} item={item} active={isActive(pathname, item.href)} collapsed={collapsed} />
+        ))}
+      </nav>
+
+      {!collapsed ? (
+        <div className="absolute bottom-4 left-4 right-4 rounded-md border border-border bg-background p-4 shadow-panel">
+          <p className="truncate text-sm font-medium">{name}</p>
+          <p className="mt-1 text-xs text-muted-foreground">Signed in with {roleName} access</p>
+          <LogoutButton icon={<LogOut aria-hidden="true" size={16} />} />
+        </div>
+      ) : null}
+    </aside>
+  );
+}
+
+function Topbar({
+  roleName,
+  name,
+  breadcrumbs,
+  themePreference,
+  setThemePreference,
+  onOpenMobile
+}: {
+  roleName: string;
+  name: string;
+  breadcrumbs: string[];
+  themePreference: ThemePreference;
+  setThemePreference: (value: ThemePreference) => void;
+  onOpenMobile: () => void;
+}) {
+  return (
+    <header className="sticky top-0 z-30 border-b border-border bg-surface/95 backdrop-blur">
+      <div className="flex min-h-16 items-center gap-3 px-4 sm:px-6 lg:px-8">
+        <button className="inline-flex h-11 w-11 items-center justify-center rounded-md border border-border bg-background lg:hidden" onClick={onOpenMobile} type="button" aria-label="Open navigation">
+          <Menu aria-hidden={true} size={20} />
+        </button>
+
+        <div className="hidden min-w-0 flex-1 md:block">
+          <nav className="text-xs text-muted-foreground" aria-label="Breadcrumbs">
+            {breadcrumbs.map((crumb, index) => (
+              <span key={`${crumb}-${index}`}>
+                {index > 0 ? <span className="px-2">/</span> : null}
+                <span className={index === breadcrumbs.length - 1 ? "font-medium text-foreground" : ""}>{crumb}</span>
+              </span>
+            ))}
+          </nav>
+          <p className="mt-1 text-sm text-muted-foreground">{roleName}</p>
+        </div>
+
+        <label className="relative hidden min-w-[220px] flex-1 md:max-w-sm lg:block">
+          <span className="sr-only">Global search</span>
+          <Search aria-hidden={true} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={17} />
+          <input className="h-11 w-full rounded-md border border-border bg-background pl-10 pr-3 text-sm" placeholder="Search people, records, reports" />
+        </label>
+
+        <button className="hidden h-11 items-center gap-2 rounded-md border border-border bg-background px-3 text-sm text-muted-foreground sm:inline-flex" type="button">
+          <span className="h-2 w-2 rounded-full bg-success" aria-hidden="true" />
+          School
+          <ChevronDown aria-hidden={true} size={16} />
+        </button>
+
+        <ThemeToggle value={themePreference} onChange={setThemePreference} />
+
+        <button className="relative inline-flex h-11 w-11 items-center justify-center rounded-md border border-border bg-background" type="button" aria-label="Notifications">
+          <Bell aria-hidden={true} size={18} />
+          <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-warning" />
+        </button>
+
+        <div className="hidden min-w-0 items-center gap-3 rounded-md border border-border bg-background px-3 py-2 md:flex">
+          <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary text-xs font-semibold text-primary-foreground">{initials(name)}</div>
+          <div className="min-w-0">
+            <p className="truncate text-sm font-medium">{name}</p>
+            <p className="truncate text-xs text-muted-foreground">User menu</p>
+          </div>
+        </div>
+      </div>
+    </header>
+  );
+}
+
+function ThemeToggle({ value, onChange }: { value: ThemePreference; onChange: (value: ThemePreference) => void }) {
+  const next = value === "light" ? "dark" : value === "dark" ? "system" : "light";
+  const Icon = value === "dark" ? Moon : value === "light" ? Sun : Check;
+  return (
+    <button className="inline-flex h-11 min-w-11 items-center justify-center gap-2 rounded-md border border-border bg-background px-3 text-sm" onClick={() => onChange(next)} type="button" aria-label={`Theme: ${value}. Switch theme`}>
+      <Icon aria-hidden={true} size={17} />
+      <span className="hidden sm:inline">{value}</span>
+    </button>
+  );
+}
+
+function MobileNav({
+  open,
+  onClose,
+  roleName,
+  name,
+  nav,
+  pathname
+}: {
+  open: boolean;
+  onClose: () => void;
+  roleName: string;
+  name: string;
+  nav: NavItem[];
+  pathname: string;
+}) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 lg:hidden" role="dialog" aria-modal="true" aria-label="Navigation">
+      <button className="absolute inset-0 bg-foreground/30" onClick={onClose} type="button" aria-label="Close navigation" />
+      <div className="relative flex h-full w-[min(88vw,360px)] flex-col border-r border-border bg-surface p-4 shadow-popover">
+        <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-md bg-primary text-primary-foreground">
-              <GraduationCap aria-hidden="true" size={22} />
+              <GraduationCap aria-hidden={true} size={22} />
             </div>
             <div>
               <p className="text-sm font-semibold">School ERP</p>
-              <p className="text-xs text-muted-foreground">{theme.name}</p>
+              <p className="text-xs text-muted-foreground">{roleName}</p>
             </div>
           </div>
+          <button className="inline-flex h-11 w-11 items-center justify-center rounded-md border border-border bg-background" onClick={onClose} type="button" aria-label="Close navigation">
+            <X aria-hidden={true} size={19} />
+          </button>
+        </div>
 
-          <nav className="mt-8 space-y-1" aria-label={`${theme.name} navigation`}>
-            {nav.map((item) => {
-              const Icon = item.icon;
-              return (
-                <Link
-                  key={item.label}
-                  className="flex h-10 items-center gap-3 rounded-md px-3 text-sm font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground"
-                  href={item.href}
-                >
-                  <Icon aria-hidden={true} size={18} />
-                  {item.label}
-                </Link>
-              );
-            })}
-          </nav>
+        <nav className="mt-6 flex-1 space-y-1 overflow-y-auto" aria-label={`${roleName} mobile navigation`}>
+          {nav.map((item) => (
+            <NavLink key={item.label} item={item} active={isActive(pathname, item.href)} onClick={onClose} />
+          ))}
+        </nav>
 
-          <div className="mt-8 rounded-md border border-border bg-background p-4">
-            <p className="text-sm font-medium">{name}</p>
-            <p className="mt-1 text-xs text-muted-foreground">Signed in with {theme.name} access</p>
-            <LogoutButton icon={<LogOut aria-hidden="true" size={16} />} />
-          </div>
-        </aside>
-
-        <main className="min-w-0 px-5 py-5 sm:px-8 lg:px-10">
-          <div className="mx-auto max-w-7xl">{children}</div>
-        </main>
+        <div className="rounded-md border border-border bg-background p-4">
+          <p className="truncate text-sm font-medium">{name}</p>
+          <p className="mt-1 text-xs text-muted-foreground">Signed in with {roleName} access</p>
+          <LogoutButton icon={<LogOut aria-hidden="true" size={16} />} />
+        </div>
       </div>
     </div>
   );
+}
+
+function NavLink({ item, active, collapsed, onClick }: { item: NavItem; active: boolean; collapsed?: boolean; onClick?: () => void }) {
+  const Icon = item.icon;
+  return (
+    <Link
+      className={cn(
+        "flex min-h-11 items-center gap-3 rounded-md px-3 text-sm font-medium transition hover:bg-muted hover:text-foreground",
+        active ? "bg-primary/10 text-primary" : "text-muted-foreground",
+        collapsed && "justify-center px-2"
+      )}
+      href={item.href}
+      onClick={onClick}
+      title={collapsed ? item.label : undefined}
+    >
+      <Icon aria-hidden={true} size={18} />
+      {!collapsed ? <span>{item.label}</span> : <span className="sr-only">{item.label}</span>}
+    </Link>
+  );
+}
+
+function buildBreadcrumbs(pathname: string) {
+  const parts = pathname.split("/").filter(Boolean);
+  if (parts.length === 0) return ["Dashboard"];
+  return parts.map((part) =>
+    part
+      .split("-")
+      .filter(Boolean)
+      .map((word) => `${word.charAt(0).toUpperCase()}${word.slice(1)}`)
+      .join(" ")
+  );
+}
+
+function isActive(pathname: string, href: string) {
+  return pathname === href || (href !== "/" && pathname.startsWith(`${href}/`));
+}
+
+function initials(name: string) {
+  return name
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part.charAt(0).toUpperCase())
+    .join("");
 }

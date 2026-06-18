@@ -4,7 +4,7 @@ import { ROLES } from "./permissions";
 export const ROLE_THEME = {
   [ROLES.SUPER_ADMIN]: {
     name: "Super Admin",
-    accent: "purple",
+    accent: "violet",
     className: "theme-super-admin"
   },
   [ROLES.SCHOOL_ADMIN]: {
@@ -24,7 +24,7 @@ export const ROLE_THEME = {
   },
   [ROLES.PARENT]: {
     name: "Parent",
-    accent: "pink",
+    accent: "rose",
     className: "theme-parent"
   },
   [ROLES.STAFF]: {

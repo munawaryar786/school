@@ -9,6 +9,8 @@ assert.equal(homePathForRole(ROLES.LIBRARIAN), "/library");
 assert.equal(homePathForRole(ROLES.HR_OFFICER), "/hr");
 
 assert.deepEqual(new Set(Object.keys(roleHomePath)), new Set(Object.values(ROLES)));
+assert.equal(ROLE_THEME[ROLES.SUPER_ADMIN].accent, "violet");
+assert.equal(ROLE_THEME[ROLES.PARENT].accent, "rose");
 assert.equal(ROLE_THEME[ROLES.FINANCE_OFFICER].className, "theme-finance");
 assert.equal(ROLE_THEME[ROLES.FINANCE_OFFICER].accent, "amber");
 assert.equal(ROLE_THEME[ROLES.LIBRARIAN].className, "theme-library");

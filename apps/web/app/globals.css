@@ -3,21 +3,106 @@
 @tailwind utilities;
 
 :root {
-  --background: 210 20% 98%;
-  --foreground: 220 22% 12%;
+  color-scheme: light;
+  --background: 210 24% 98%;
+  --foreground: 220 24% 12%;
   --surface: 0 0% 100%;
+  --surface-elevated: 0 0% 100%;
+  --surface-muted: 214 28% 95%;
   --muted: 214 24% 93%;
-  --muted-foreground: 220 9% 43%;
+  --muted-foreground: 220 10% 42%;
   --border: 214 22% 86%;
+  --border-strong: 215 18% 72%;
+  --focus-ring: 221 83% 53%;
   --primary: 221 83% 53%;
   --primary-foreground: 0 0% 100%;
+  --secondary: 215 20% 24%;
+  --secondary-foreground: 0 0% 100%;
+  --info: 204 94% 42%;
   --success: 145 63% 36%;
   --warning: 34 94% 48%;
+  --error: 0 72% 51%;
   --danger: 0 72% 51%;
+  --radius-control: 6px;
+  --radius-panel: 8px;
+  --shadow-panel: 0 1px 2px hsl(220 24% 12% / 0.06);
+  --shadow-popover: 0 12px 32px hsl(220 24% 12% / 0.12);
+}
+
+.theme-dark {
+  color-scheme: dark;
+  --background: 222 24% 9%;
+  --foreground: 210 30% 94%;
+  --surface: 222 22% 12%;
+  --surface-elevated: 221 20% 15%;
+  --surface-muted: 220 18% 18%;
+  --muted: 221 18% 18%;
+  --muted-foreground: 216 15% 68%;
+  --border: 219 16% 26%;
+  --border-strong: 218 15% 38%;
+  --focus-ring: 211 100% 68%;
+  --primary: 216 95% 66%;
+  --primary-foreground: 222 24% 9%;
+  --secondary: 215 18% 84%;
+  --secondary-foreground: 222 24% 9%;
+  --info: 204 95% 70%;
+  --success: 145 58% 48%;
+  --warning: 39 96% 58%;
+  --error: 0 84% 65%;
+  --danger: 0 84% 65%;
+  --shadow-panel: 0 1px 2px hsl(0 0% 0% / 0.2);
+  --shadow-popover: 0 18px 42px hsl(0 0% 0% / 0.34);
+}
+
+@media (prefers-color-scheme: dark) {
+  .theme-system {
+    color-scheme: dark;
+    --background: 222 24% 9%;
+    --foreground: 210 30% 94%;
+    --surface: 222 22% 12%;
+    --surface-elevated: 221 20% 15%;
+    --surface-muted: 220 18% 18%;
+    --muted: 221 18% 18%;
+    --muted-foreground: 216 15% 68%;
+    --border: 219 16% 26%;
+    --border-strong: 218 15% 38%;
+    --focus-ring: 211 100% 68%;
+    --primary: 216 95% 66%;
+    --primary-foreground: 222 24% 9%;
+    --secondary: 215 18% 84%;
+    --secondary-foreground: 222 24% 9%;
+    --info: 204 95% 70%;
+    --success: 145 58% 48%;
+    --warning: 39 96% 58%;
+    --error: 0 84% 65%;
+    --danger: 0 84% 65%;
+    --shadow-panel: 0 1px 2px hsl(0 0% 0% / 0.2);
+    --shadow-popover: 0 18px 42px hsl(0 0% 0% / 0.34);
+  }
+}
+
+@media (prefers-contrast: more) {
+  :root,
+  .theme-dark,
+  .theme-system {
+    --border: var(--border-strong);
+    --focus-ring: 47 100% 50%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
 }
 
 .theme-super-admin {
-  --primary: 271 81% 56%;
+  --primary: 262 83% 58%;
 }
 
 .theme-school-admin {
@@ -33,7 +118,11 @@
 }
 
 .theme-parent {
-  --primary: 328 78% 52%;
+  --primary: 346 77% 50%;
+}
+
+.theme-admissions {
+  --primary: 190 88% 42%;
 }
 
 .theme-academic {
@@ -66,8 +155,7 @@ html {
 
 body {
   min-height: 100%;
-  background:
-    linear-gradient(180deg, hsl(210 20% 98%) 0%, hsl(214 24% 94%) 100%);
+  background: hsl(var(--background));
   color: hsl(var(--foreground));
   font-feature-settings: "cv02", "cv03", "cv04", "cv11";
 }
@@ -81,5 +169,5 @@ textarea {
 
 :focus-visible {
   outline: none;
-  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.24);
+  box-shadow: 0 0 0 3px hsl(var(--focus-ring) / 0.3);
 }
