@@ -76,7 +76,7 @@ Verification rule for features: a feature is `Verified` only when UI works, API 
 | 2 | Reconcile and preserve valid existing work | Completed |
 | 3 | Complete design tokens and shared UI architecture | In Progress |
 | 4 | Stabilize authentication and role routing | Not Started |
-| 5 | Fix Create School and Super Admin CRUD | In Progress |
+| 5 | Fix Create School and Super Admin CRUD | Completed, not Verified |
 | 6 | Complete School Admin core setup | Not Started |
 | 7 | Complete role-specific dashboards with real data | Not Started |
 | 8 | Complete Admissions | Not Started |
@@ -241,7 +241,7 @@ Verification rule for features: a feature is `Verified` only when UI works, API 
 
 | Dashboard | Required content | Status |
 | --- | --- | --- |
-| Super Admin | Total schools, active schools, suspended schools, campuses, users, students, staff, new schools this period, onboarding status, platform usage, tenant health, administrator activity, security alerts, failed operations, audit activity, school growth chart, users by role, schools by status, quick actions | Not Started |
+| Super Admin | Total schools, active schools, suspended schools, campuses, users, students, staff, new schools this period, onboarding status, platform usage, tenant health, administrator activity, security alerts, failed operations, audit activity, school growth chart, users by role, schools by status, quick actions | In Progress |
 | Super Admin Create School | Fully functional create school flow | Completed, not Verified |
 | School Admin | Students, teachers, staff, classes, attendance today, pending admissions, fees collected, outstanding fees, upcoming exams, leave requests, activity, attendance trends, fee collection trends, class distribution, quick actions | Not Started |
 | Teacher | Today's classes, attendance pending, assignments to grade, upcoming exams, announcements, class attendance trends, performance summary, curriculum progress, quick actions | Not Started |
@@ -256,7 +256,7 @@ Verification rule for features: a feature is `Verified` only when UI works, API 
 
 | Module | Required workflows | Status |
 | --- | --- | --- |
-| Super Admin | Schools, campuses, school administrators, user management, roles, permissions, feature flags, system settings, audit logs, security events, platform announcements | Not Started |
+| Super Admin | Schools, campuses, school administrators, user management, roles, permissions, feature flags, system settings, audit logs, security events, platform announcements | In Progress |
 | Admissions | Inquiries, applications, stages, document checklist, interviews, assessments, offers, rejections, waitlist, enrollment conversion, reporting | Not Started |
 | Academic | Academic years, terms, classes, sections, subjects, curriculum, timetables, rooms, teacher allocation, academic calendar | Not Started |
 | Student Information | Profile, guardians, parent-child relationship, documents, enrollment, class assignment, school history, promotion, transfer readiness, status history | Not Started |
@@ -274,20 +274,20 @@ Verification rule for features: a feature is `Verified` only when UI works, API 
 | Requirement | Status |
 | --- | --- |
 | Enterprise pages are not card-only | Not Started |
-| Search | Not Started |
-| Filters | Not Started |
+| Search | In Progress |
+| Filters | In Progress |
 | Advanced filters | Not Started |
-| Sorting | Not Started |
-| Pagination | Not Started |
+| Sorting | In Progress |
+| Pagination | In Progress |
 | Column visibility | Not Started |
 | Saved views | Not Started |
 | Bulk selection | Not Started |
 | Bulk actions | Not Started |
 | Export | Not Started |
-| Empty state | Not Started |
-| Loading skeleton | Not Started |
-| Error state | Not Started |
-| Row action menu | Not Started |
+| Empty state | In Progress |
+| Loading skeleton | In Progress |
+| Error state | In Progress |
+| Row action menu | In Progress |
 | Mobile fallback | Not Started |
 | Server-side pagination for large lists | Not Started |
 
@@ -295,23 +295,23 @@ Verification rule for features: a feature is `Verified` only when UI works, API 
 
 | Requirement | Status |
 | --- | --- |
-| Fix Create School and currently non-working CRUD actions first | In Progress |
+| Fix Create School and currently non-working CRUD actions first | Completed, not Verified |
 | Do not build dashboards before critical CRUD foundation works | Completed |
-| Zod validation | In Progress |
-| Shared schemas | In Progress |
-| Server-side validation | In Progress |
-| Inline field errors | In Progress |
-| Error summary | In Progress |
-| Loading state | In Progress |
-| Disabled submit during request | In Progress |
+| Zod validation | Completed, not Verified |
+| Shared schemas | Completed, not Verified |
+| Server-side validation | Completed, not Verified |
+| Inline field errors | Completed, not Verified |
+| Error summary | Completed, not Verified |
+| Loading state | Completed, not Verified |
+| Disabled submit during request | Completed, not Verified |
 | Success toast | Not Started |
 | Failure toast | Not Started |
-| Confirmation for destructive actions | In Progress |
+| Confirmation for destructive actions | Completed, not Verified |
 | Unsaved-change warning | Not Started |
 | Accessible labels | In Progress |
 | Keyboard support | In Progress |
-| Tenant validation | Not Started |
-| Audit logging | In Progress |
+| Tenant validation | In Progress |
+| Audit logging | Completed, not Verified |
 
 ## Multi-Tenancy
 
@@ -382,12 +382,12 @@ Verification rule for features: a feature is `Verified` only when UI works, API 
 | Requirement | Status |
 | --- | --- |
 | Typecheck affected workspace after each module | In Progress |
-| Run targeted tests only after each module | In Progress |
-| Verify API routes after each module | Not Started |
-| Verify permissions after each module | Not Started |
+| Run targeted tests only after each module | Blocked |
+| Verify API routes after each module | In Progress |
+| Verify permissions after each module | In Progress |
 | Verify school isolation after each module | Not Started |
-| Verify database operation after each module | Not Started |
-| Verify loading/error/empty states after each module | In Progress |
+| Verify database operation after each module | In Progress |
+| Verify loading/error/empty states after each module | Completed, not Verified |
 | Update checklist after each module | In Progress |
 
 ## Final Validation Requirement
@@ -404,8 +404,8 @@ Verification rule for features: a feature is `Verified` only when UI works, API 
 
 | Acceptance test | Status |
 | --- | --- |
-| Super Admin creates school | Not Started |
-| Super Admin creates school administrator | Not Started |
+| Super Admin creates school | Completed, not Verified |
+| Super Admin creates school administrator | Completed, not Verified |
 | School Admin creates academic year | Not Started |
 | School Admin creates class and section | Not Started |
 | Admissions creates and enrolls student | Not Started |
