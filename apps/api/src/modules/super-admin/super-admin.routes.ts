@@ -81,7 +81,11 @@ router.get("/dashboard", requirePermission(PERMISSIONS.SCHOOLS_READ), async (_re
       totalSchools,
       activeSchools,
       suspendedSchools,
+      archivedSchools,
       totalCampuses,
+      totalAdministrators,
+      activeAdministrators,
+      suspendedAdministrators,
       totalUsers,
       totalStudents,
       totalStaff,
@@ -89,14 +93,18 @@ router.get("/dashboard", requirePermission(PERMISSIONS.SCHOOLS_READ), async (_re
       usersByRole,
       recentAdministratorActivity
     ] = await Promise.all([
-      prisma.school.count({ where: { deletedAt: null } }),
+      prisma.school.count(),
       prisma.school.count({ where: { deletedAt: null, status: "ACTIVE" } }),
       prisma.school.count({ where: { deletedAt: null, status: "SUSPENDED" } }),
+      prisma.school.count({ where: { status: "ARCHIVED" } }),
       prisma.campus.count({ where: { school: { deletedAt: null } } }),
+      prisma.schoolMembership.count({ where: { role: { code: "SCHOOL_ADMIN" }, schoolId: { not: null } } }),
+      prisma.schoolMembership.count({ where: { role: { code: "SCHOOL_ADMIN" }, schoolId: { not: null }, status: "ACTIVE" } }),
+      prisma.schoolMembership.count({ where: { role: { code: "SCHOOL_ADMIN" }, schoolId: { not: null }, status: "SUSPENDED" } }),
       prisma.user.count(),
       prisma.studentProfile.count(),
       prisma.schoolMembership.count({ where: { role: { code: { in: ["SCHOOL_ADMIN", "TEACHER", "STAFF", "FINANCE_OFFICER", "LIBRARIAN", "HR_OFFICER"] } } } }),
-      prisma.school.groupBy({ by: ["status"], where: { deletedAt: null }, _count: { _all: true }, orderBy: { status: "asc" } }),
+      prisma.school.groupBy({ by: ["status"], _count: { _all: true }, orderBy: { status: "asc" } }),
       prisma.schoolMembership.groupBy({ by: ["roleId"], _count: { _all: true }, orderBy: { roleId: "asc" } }),
       prisma.auditLog.findMany({
         where: { resource: { in: ["administrator", "school", "campus"] } },
@@ -113,7 +121,11 @@ router.get("/dashboard", requirePermission(PERMISSIONS.SCHOOLS_READ), async (_re
         totalSchools,
         activeSchools,
         suspendedSchools,
+        archivedSchools,
         totalCampuses,
+        totalAdministrators,
+        activeAdministrators,
+        suspendedAdministrators,
         totalUsers,
         totalStudents,
         totalStaff
@@ -182,16 +194,75 @@ router.get("/schools", requirePermission(PERMISSIONS.SCHOOLS_READ), async (req, 
 
 router.get("/schools/:id", requirePermission(PERMISSIONS.SCHOOLS_READ), async (req, res, next) => {
   try {
+    const schoolId = routeId(req);
     const school = await prisma.school.findFirst({
-      where: { id: routeId(req), deletedAt: null },
+      where: { id: schoolId, deletedAt: null },
       include: {
         campuses: { orderBy: { createdAt: "desc" } },
-        memberships: { include: { user: { select: { name: true, email: true, isActive: true } }, role: true }, orderBy: { createdAt: "desc" }, take: 10 },
         subscriptions: { include: { plan: true }, orderBy: { createdAt: "desc" }, take: 3 }
       }
     });
     if (!school) return fail(res, 404, "NOT_FOUND", "School not found.");
-    return ok(res, school);
+    const [
+      schoolAdmins,
+      usersByRole,
+      teacherCount,
+      studentCount,
+      libraryBookCount,
+      recentActivity
+    ] = await Promise.all([
+      prisma.schoolMembership.findMany({
+        where: { schoolId, role: { code: "SCHOOL_ADMIN" } },
+        include: { user: { select: { id: true, name: true, email: true, isActive: true } }, role: true },
+        orderBy: { createdAt: "desc" }
+      }),
+      prisma.schoolMembership.groupBy({ by: ["roleId"], where: { schoolId }, _count: { _all: true }, orderBy: { roleId: "asc" } }),
+      prisma.teacherProfile.count({ where: { schoolId } }),
+      prisma.studentProfile.count({ where: { schoolId } }),
+      prisma.libraryBook.count({ where: { schoolId } }),
+      prisma.auditLog.findMany({
+        where: { schoolId },
+        include: { user: { select: { name: true, email: true } } },
+        orderBy: { createdAt: "desc" },
+        take: 8
+      })
+    ]);
+    const roleIds = usersByRole.map((item) => item.roleId);
+    const roles = roleIds.length ? await prisma.role.findMany({ where: { id: { in: roleIds } } }) : [];
+    const roleNameById = new Map(roles.map((role) => [role.id, role.code]));
+    const roleCounts = usersByRole.map((item) => ({ role: roleNameById.get(item.roleId) ?? item.roleId, count: item._count._all }));
+    return ok(res, {
+      ...school,
+      schoolAdmins: schoolAdmins.map((item) => ({
+        id: item.id,
+        userId: item.userId,
+        name: item.user.name,
+        email: item.user.email,
+        status: item.status,
+        isActive: item.user.isActive,
+        createdAt: item.createdAt,
+        updatedAt: item.updatedAt
+      })),
+      counts: {
+        campuses: school.campuses.length,
+        users: roleCounts.reduce((sum, item) => sum + item.count, 0),
+        teachers: teacherCount,
+        students: studentCount,
+        parents: roleCounts.find((item) => item.role === "PARENT")?.count ?? 0,
+        libraryBooks: libraryBookCount,
+        administrators: schoolAdmins.length
+      },
+      usersByRole: roleCounts,
+      recentActivity: recentActivity.map((item) => ({
+        id: item.id,
+        action: item.action,
+        resource: item.resource,
+        resourceId: item.resourceId,
+        actorName: item.user?.name ?? null,
+        actorEmail: item.user?.email ?? null,
+        createdAt: item.createdAt
+      }))
+    });
   } catch (error) {
     next(error);
   }
@@ -351,8 +422,10 @@ router.get("/administrators", requirePermission(PERMISSIONS.ADMINS_MANAGE), asyn
     const query = pageQuerySchema.parse(req.query);
     const schoolRole = await prisma.role.findUniqueOrThrow({ where: { code: "SCHOOL_ADMIN" } });
     const adminStatus = parseEnumFilter(["ACTIVE", "INVITED", "SUSPENDED"], query.status);
+    const schoolId = typeof req.query.schoolId === "string" && req.query.schoolId.trim() ? req.query.schoolId.trim() : undefined;
     const where: Prisma.SchoolMembershipWhereInput = {
       roleId: schoolRole.id,
+      ...(schoolId ? { schoolId } : {}),
       ...(adminStatus ? { status: adminStatus } : {}),
       ...(query.search
         ? {
@@ -382,7 +455,9 @@ router.get("/administrators", requirePermission(PERMISSIONS.ADMINS_MANAGE), asyn
       email: item.user.email,
       schoolName: item.school?.name ?? "Platform",
       status: item.status,
-      isActive: item.user.isActive
+      isActive: item.user.isActive,
+      createdAt: item.createdAt,
+      updatedAt: item.updatedAt
     }));
     if (query.format === "csv") return csv(res, "administrators.csv", data);
     return paginated(res, data, query.page, query.pageSize, total);
@@ -419,6 +494,8 @@ router.get("/administrators/:id", requirePermission(PERMISSIONS.ADMINS_MANAGE), 
 router.post("/administrators", requirePermission(PERMISSIONS.ADMINS_MANAGE), async (req, res, next) => {
   try {
     const input = administratorSchema.parse(req.body);
+    const school = await prisma.school.findFirst({ where: { id: input.schoolId, deletedAt: null } });
+    if (!school) return fail(res, 404, "NOT_FOUND", "School not found.");
     const passwordHash = await bcrypt.hash(input.password ?? "Password123!", 12);
     const role = await prisma.role.findUniqueOrThrow({ where: { code: "SCHOOL_ADMIN" } });
     const result = await prisma.$transaction(async (tx) => {
@@ -471,6 +548,17 @@ router.delete("/administrators/:id", requirePermission(PERMISSIONS.ADMINS_MANAGE
     const membership = await prisma.schoolMembership.update({ where: { id: routeId(req) }, data: { status: "SUSPENDED" } });
     await writeAudit(req, "DELETE", "administrator", membership.id, {});
     return ok(res, { deleted: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/administrators/:id/suspend", requirePermission(PERMISSIONS.ADMINS_MANAGE), async (req, res, next) => {
+  try {
+    const membership = await prisma.schoolMembership.update({ where: { id: routeId(req) }, data: { status: "SUSPENDED" } });
+    await prisma.user.update({ where: { id: membership.userId }, data: { isActive: false } });
+    await writeAudit(req, "UPDATE", "administrator", membership.id, { status: "SUSPENDED" });
+    return ok(res, { updated: true });
   } catch (error) {
     next(error);
   }

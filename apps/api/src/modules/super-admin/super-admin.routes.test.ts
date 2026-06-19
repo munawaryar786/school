@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { after, beforeEach, describe, it, mock } from "node:test";
+import { after, before, beforeEach, describe, it, mock } from "node:test";
 import express from "express";
 import request from "supertest";
 import { PERMISSIONS } from "@school-erp/shared";
@@ -43,17 +43,19 @@ mock.module("../auth/auth.middleware", {
   }
 });
 
-const { superAdminRoutes } = await import("./super-admin.routes.ts");
-
 const app = express();
 app.use(express.json());
 app.use((_, res, next) => {
   res.locals.requestId = "test";
   next();
 });
-app.use("/v1/super-admin", superAdminRoutes);
-app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  res.status(500).json({ success: false, error: { message: error instanceof Error ? error.message : "error" }, meta: { requestId: "test" } });
+
+before(async () => {
+  const { superAdminRoutes } = await import("./super-admin.routes.ts");
+  app.use("/v1/super-admin", superAdminRoutes);
+  app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    res.status(500).json({ success: false, error: { message: error instanceof Error ? error.message : "error" }, meta: { requestId: "test" } });
+  });
 });
 
 describe("Super Admin routes", () => {
@@ -102,26 +104,33 @@ describe("Super Admin routes", () => {
 
     assert.equal(response.status, 200);
     assert.equal(response.body.data.deleted, true);
-    assert.equal(prismaMock.school.update.mock.calls[0].arguments[0].data.status, "ARCHIVED");
+    assert.equal(lastMockCall(prismaMock.school.update).arguments[0].data.status, "ARCHIVED");
   });
 
   it("denies create school without permission", async () => {
+    const createCallsBefore = mockCallCount(prismaMock.school.create);
     const response = await request(app).post("/v1/super-admin/schools").send({ name: "North Ridge", slug: "north-ridge" });
 
     assert.equal(response.status, 403);
-    assert.equal(prismaMock.school.create.mock.callCount(), 0);
+    assert.equal(mockCallCount(prismaMock.school.create), createCallsBefore);
   });
 
   it("returns dashboard aggregate response", async () => {
-    prismaMock.school.count.mock.mockImplementation(async ({ where }: any) => {
+    prismaMock.school.count.mock.mockImplementation(async ({ where }: any = {}) => {
       if (where?.status === "ACTIVE") return 2;
       if (where?.status === "SUSPENDED") return 1;
+      if (where?.status === "ARCHIVED") return 7;
       return 3;
     });
     prismaMock.campus.count.mock.mockImplementationOnce(async () => 4);
+    prismaMock.schoolMembership.count.mock.mockImplementation(async ({ where }: any = {}) => {
+      if (where?.role?.code === "SCHOOL_ADMIN" && where?.status === "ACTIVE") return 6;
+      if (where?.role?.code === "SCHOOL_ADMIN" && where?.status === "SUSPENDED") return 2;
+      if (where?.role?.code === "SCHOOL_ADMIN") return 8;
+      return 6;
+    });
     prismaMock.user.count.mock.mockImplementationOnce(async () => 9);
     prismaMock.studentProfile.count.mock.mockImplementationOnce(async () => 5);
-    prismaMock.schoolMembership.count.mock.mockImplementationOnce(async () => 6);
     prismaMock.school.groupBy.mock.mockImplementationOnce(async () => [{ status: "ACTIVE", _count: { _all: 2 } }]);
     prismaMock.schoolMembership.groupBy.mock.mockImplementationOnce(async () => [{ roleId: "role_admin", _count: { _all: 1 } }]);
     prismaMock.auditLog.findMany.mock.mockImplementationOnce(async () => [{ id: "audit_1", action: "CREATE", resource: "school", resourceId: "school_1", school: null, user: { name: "Owner", email: "owner@test.local" }, createdAt: new Date("2026-06-18T00:00:00Z") }]);
@@ -133,8 +142,80 @@ describe("Super Admin routes", () => {
 
     assert.equal(response.status, 200);
     assert.equal(response.body.data.metrics.totalSchools, 3);
+    assert.equal(response.body.data.metrics.archivedSchools, 7);
     assert.equal(response.body.data.metrics.totalCampuses, 4);
+    assert.equal(response.body.data.metrics.totalAdministrators, 8);
+    assert.equal(response.body.data.metrics.activeAdministrators, 6);
+    assert.equal(response.body.data.metrics.suspendedAdministrators, 2);
     assert.equal(response.body.data.usersByRole[0].role, "SCHOOL_ADMIN");
+  });
+
+  it("returns school detail with admins, counts, and recent activity", async () => {
+    prismaMock.school.findFirst.mock.mockImplementationOnce(async () => ({
+      id: "school_1",
+      name: "North Ridge",
+      slug: "north-ridge",
+      status: "ACTIVE",
+      campuses: [{ id: "campus_1", name: "Main", code: "MAIN", status: "ACTIVE", createdAt: new Date("2026-06-18T00:00:00Z") }],
+      subscriptions: [],
+      createdAt: new Date("2026-06-18T00:00:00Z"),
+      updatedAt: new Date("2026-06-18T00:00:00Z")
+    }));
+    prismaMock.schoolMembership.findMany.mock.mockImplementationOnce(async () => [
+      {
+        id: "membership_1",
+        userId: "user_1",
+        status: "ACTIVE",
+        createdAt: new Date("2026-06-18T00:00:00Z"),
+        updatedAt: new Date("2026-06-18T00:00:00Z"),
+        user: { id: "user_1", name: "Admin User", email: "admin@test.local", isActive: true },
+        role: { code: "SCHOOL_ADMIN" }
+      }
+    ]);
+    prismaMock.schoolMembership.groupBy.mock.mockImplementationOnce(async () => [{ roleId: "role_parent", _count: { _all: 3 } }]);
+    prismaMock.teacherProfile.count.mock.mockImplementationOnce(async () => 4);
+    prismaMock.studentProfile.count.mock.mockImplementationOnce(async () => 12);
+    prismaMock.libraryBook.count.mock.mockImplementationOnce(async () => 20);
+    prismaMock.auditLog.findMany.mock.mockImplementationOnce(async () => [{ id: "audit_1", action: "CREATE", resource: "administrator", resourceId: "membership_1", user: { name: "Owner", email: "owner@test.local" }, createdAt: new Date("2026-06-18T00:00:00Z") }]);
+    prismaMock.role.findMany.mock.mockImplementationOnce(async () => [{ id: "role_parent", code: "PARENT" }]);
+
+    const response = await request(app)
+      .get("/v1/super-admin/schools/school_1")
+      .set("x-test-permissions", PERMISSIONS.SCHOOLS_READ);
+
+    assert.equal(response.status, 200);
+    assert.equal(response.body.data.schoolAdmins[0].email, "admin@test.local");
+    assert.equal(response.body.data.counts.campuses, 1);
+    assert.equal(response.body.data.counts.teachers, 4);
+    assert.equal(response.body.data.counts.students, 12);
+    assert.equal(response.body.data.counts.parents, 3);
+    assert.equal(response.body.data.counts.libraryBooks, 20);
+    assert.equal(response.body.data.recentActivity[0].resource, "administrator");
+  });
+
+  it("filters administrators by school", async () => {
+    prismaMock.role.findUniqueOrThrow.mock.mockImplementationOnce(async () => ({ id: "role_admin", code: "SCHOOL_ADMIN" }));
+
+    const response = await request(app)
+      .get("/v1/super-admin/administrators?schoolId=school_1")
+      .set("x-test-permissions", PERMISSIONS.ADMINS_MANAGE);
+
+    assert.equal(response.status, 200);
+    assert.equal(lastMockCall(prismaMock.schoolMembership.findMany).arguments[0].where.schoolId, "school_1");
+    assert.equal(lastMockCall(prismaMock.schoolMembership.count).arguments[0].where.schoolId, "school_1");
+  });
+
+  it("suspends an administrator and deactivates the user", async () => {
+    prismaMock.schoolMembership.update.mock.mockImplementationOnce(async () => ({ id: "membership_1", userId: "user_1" }));
+
+    const response = await request(app)
+      .post("/v1/super-admin/administrators/membership_1/suspend")
+      .set("x-test-permissions", PERMISSIONS.ADMINS_MANAGE)
+      .send({});
+
+    assert.equal(response.status, 200);
+    assert.equal(lastMockCall(prismaMock.schoolMembership.update).arguments[0].data.status, "SUSPENDED");
+    assert.equal(lastMockCall(prismaMock.user.update).arguments[0].data.isActive, false);
   });
 });
 
@@ -163,6 +244,12 @@ function makePrismaMock() {
       create: mock.fn(async () => ({}))
     },
     studentProfile: {
+      count: mock.fn(async () => 0)
+    },
+    teacherProfile: {
+      count: mock.fn(async () => 0)
+    },
+    libraryBook: {
       count: mock.fn(async () => 0)
     },
     schoolMembership: {
@@ -215,7 +302,18 @@ function resetPrismaMock(client: ReturnType<typeof makePrismaMock>) {
     for (const value of Object.values(delegate)) {
       if (typeof value === "function" && "mock" in value) {
         (value as any).mock.resetCalls();
+        (value as any).mock.restore();
       }
     }
   }
+}
+
+function mockCallCount(fn: { mock: { calls: unknown[]; callCount?: () => number } }) {
+  return typeof fn.mock.callCount === "function" ? fn.mock.callCount() : fn.mock.calls.length;
+}
+
+function lastMockCall(fn: { mock: { calls: Array<{ arguments: any[] }> } }) {
+  const call = fn.mock.calls.at(-1);
+  assert.ok(call, "Expected mock to have been called.");
+  return call;
 }

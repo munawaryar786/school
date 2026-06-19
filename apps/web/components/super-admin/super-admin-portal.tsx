@@ -46,11 +46,22 @@ type SortState = { sortBy: string; sortDirection: "asc" | "desc" };
 type Row = Record<string, any>;
 
 type DashboardData = {
-  metrics: Record<"totalSchools" | "activeSchools" | "suspendedSchools" | "totalCampuses" | "totalUsers" | "totalStudents" | "totalStaff", number>;
+  metrics: Record<
+    "totalSchools" | "activeSchools" | "suspendedSchools" | "archivedSchools" | "totalCampuses" | "totalAdministrators" | "activeAdministrators" | "suspendedAdministrators" | "totalUsers" | "totalStudents" | "totalStaff",
+    number
+  >;
   schoolsByStatus: Array<{ status: string; count: number }>;
   usersByRole: Array<{ role: string; count: number }>;
   recentAdministratorActivity: Array<{ id: string; action: string; resource: string; resourceId: string | null; actorName: string | null; actorEmail: string | null; schoolName: string | null; createdAt: string }>;
   lastUpdatedAt: string;
+};
+
+type SchoolDetailData = Row & {
+  counts?: Partial<Record<"campuses" | "users" | "teachers" | "students" | "parents" | "libraryBooks" | "administrators", number>>;
+  schoolAdmins?: Row[];
+  campuses?: Row[];
+  usersByRole?: Array<{ role: string; count: number }>;
+  recentActivity?: Row[];
 };
 
 type SchoolOption = { id: string; name: string; slug: string; status: string };
@@ -156,10 +167,14 @@ function DashboardSection({ refreshKey }: { refreshKey: number }) {
   if (!data) return <EmptyPanel text="No dashboard data is available." />;
 
   const metrics = [
-    ["Total schools", data.metrics.totalSchools, "All non-archived school tenants", Building2],
+    ["Total schools", data.metrics.totalSchools, "All school tenants including archived records", Building2],
     ["Active schools", data.metrics.activeSchools, "Schools currently available to users", CheckCircle2],
     ["Suspended schools", data.metrics.suspendedSchools, "Schools blocked from normal operations", ShieldAlert],
+    ["Archived schools", data.metrics.archivedSchools, "Schools archived from normal tenant lists", Archive],
     ["Total campuses", data.metrics.totalCampuses, "Campus records across active tenant history", Landmark],
+    ["School administrators", data.metrics.totalAdministrators, "Assigned school administrator memberships", UserCog],
+    ["Active administrators", data.metrics.activeAdministrators, "Administrators who can currently operate schools", ShieldCheck],
+    ["Suspended administrators", data.metrics.suspendedAdministrators, "Administrators blocked from school operations", ShieldAlert],
     ["Total users", data.metrics.totalUsers, "Platform user accounts", Users],
     ["Total students", data.metrics.totalStudents, "Student profiles across schools", Users],
     ["Total staff", data.metrics.totalStaff, "Staff and operational memberships", UserCog]
@@ -182,7 +197,7 @@ function DashboardSection({ refreshKey }: { refreshKey: number }) {
 
       <div className="grid gap-4 md:grid-cols-3">
         <QuickActionCard title="Create school" detail={`${data.metrics.totalSchools.toLocaleString()} schools currently tracked`} icon={Plus} />
-        <QuickActionCard title="Create administrator" detail={`${data.metrics.totalUsers.toLocaleString()} user accounts available`} icon={UserCog} />
+        <QuickActionCard title="Create administrator" detail={`${data.metrics.totalAdministrators.toLocaleString()} administrators currently assigned`} icon={UserCog} />
         <QuickActionCard title="Review activity" detail={`${data.recentAdministratorActivity.length.toLocaleString()} recent platform events loaded`} icon={Activity} />
       </div>
 
@@ -230,10 +245,72 @@ function QuickActionCard({ title, detail, icon: Icon }: { title: string; detail:
   );
 }
 
+function SchoolDetailPanel({ schoolId, refreshKey, onClose }: { schoolId: string; refreshKey: number; onClose: () => void }) {
+  const { data, loading, error, retry } = useOne<SchoolDetailData>(`schools/${schoolId}`, refreshKey);
+  if (loading) return <LoadingPanel text="Loading school detail" />;
+  if (error) return <ErrorPanel text={error} onRetry={retry} />;
+  if (!data) return <EmptyPanel text="No school detail is available." />;
+
+  const counts: NonNullable<SchoolDetailData["counts"]> = data.counts ?? {};
+  const summaryRows = {
+    name: data.name,
+    slug: data.slug,
+    status: data.status,
+    email: data.email,
+    phone: data.phone,
+    createdAt: data.createdAt,
+    updatedAt: data.updatedAt
+  };
+  const countCards = [
+    ["Campuses", counts.campuses ?? 0],
+    ["Administrators", counts.administrators ?? 0],
+    ["Users", counts.users ?? 0],
+    ["Teachers", counts.teachers ?? 0],
+    ["Students", counts.students ?? 0],
+    ["Parents", counts.parents ?? 0],
+    ["Library books", counts.libraryBooks ?? 0]
+  ] as const;
+
+  return (
+    <section className="space-y-4 rounded-lg border border-border bg-surface p-4 shadow-panel xl:col-start-2">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h2 className="text-base font-semibold">{data.name}</h2>
+          <p className="mt-1 text-xs text-muted-foreground">School detail, assigned administrators, campuses, counts, and recent activity.</p>
+        </div>
+        <button className="h-10 rounded-md border border-border px-3 text-sm" onClick={onClose} type="button">Close</button>
+      </div>
+
+      <dl className="grid gap-3 sm:grid-cols-2">
+        {Object.entries(summaryRows).map(([key, value]) => (
+          <div key={key} className="rounded-md border border-border bg-background p-3">
+            <dt className="text-xs uppercase text-muted-foreground">{key}</dt>
+            <dd className="mt-1 break-words text-sm">{key === "status" ? <StatusBadge value={value} /> : formatValue(value)}</dd>
+          </div>
+        ))}
+      </dl>
+
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {countCards.map(([label, value]) => (
+          <div key={label} className="rounded-md border border-border bg-background p-3">
+            <p className="text-xs uppercase text-muted-foreground">{label}</p>
+            <p className="mt-1 text-2xl font-semibold">{value.toLocaleString()}</p>
+          </div>
+        ))}
+      </div>
+
+      <MiniTable title="Assigned School Administrators" columns={["name", "email", "status", "createdAt"]} rows={data.schoolAdmins ?? []} />
+      <MiniTable title="Campuses" columns={["name", "code", "status", "createdAt"]} rows={data.campuses ?? []} />
+      <ChartList title="School users by role" rows={(data.usersByRole ?? []).map((item) => ({ label: item.role, value: item.count }))} summary="Role counts are scoped to this school." />
+      <MiniTable title="Recent School Activity" columns={["action", "resource", "actorName", "createdAt"]} rows={data.recentActivity ?? []} />
+    </section>
+  );
+}
+
 function SchoolsSection(props: ListSectionProps) {
   const [form, setForm] = useState<CreateSchoolInput>(emptySchoolForm);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [selected, setSelected] = useState<Row | null>(null);
+  const [selectedSchoolId, setSelectedSchoolId] = useState<string | null>(null);
   const formState = useValidatedSubmit<CreateSchoolInput>();
   const list = useList("schools", props.search, props.status, props.sort, props.page, props.refreshKey);
 
@@ -285,7 +362,7 @@ function SchoolsSection(props: ListSectionProps) {
         sort={props.sort}
         setSort={props.setSort}
         setPage={props.setPage}
-        onView={setSelected}
+        onView={(row) => setSelectedSchoolId(row.id)}
         onEdit={edit}
         actions={(row) => (
           <>
@@ -295,7 +372,7 @@ function SchoolsSection(props: ListSectionProps) {
           </>
         )}
       />
-      {selected ? <DetailPanel title={selected.name} onClose={() => setSelected(null)} rows={selected} /> : null}
+      {selectedSchoolId ? <SchoolDetailPanel schoolId={selectedSchoolId} refreshKey={props.refreshKey} onClose={() => setSelectedSchoolId(null)} /> : null}
     </div>
   );
 }
@@ -351,8 +428,9 @@ function CampusesSection(props: ListSectionProps) {
 function AdministratorsSection(props: ListSectionProps) {
   const [form, setForm] = useState<AdministratorInput>(emptyAdministratorForm);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [schoolFilter, setSchoolFilter] = useState("");
   const formState = useValidatedSubmit<AdministratorInput>();
-  const list = useList("administrators", props.search, props.status, props.sort, props.page, props.refreshKey);
+  const list = useList("administrators", props.search, props.status, props.sort, props.page, props.refreshKey, schoolFilter);
   const schools = useSchoolOptions(props.refreshKey);
 
   function edit(row: Row) {
@@ -375,7 +453,7 @@ function AdministratorsSection(props: ListSectionProps) {
 
   async function suspend(row: Row) {
     if (!window.confirm(`Suspend administrator ${row.name}?`)) return;
-    await api(`administrators/${row.id}`, { method: "DELETE" });
+    await api(`administrators/${row.id}/suspend`, { method: "POST", body: "{}" });
     props.onDone("Administrator suspended.");
   }
 
@@ -394,24 +472,29 @@ function AdministratorsSection(props: ListSectionProps) {
         <SelectField label="Status" value={form.status} options={["ACTIVE", "INVITED", "SUSPENDED"]} error={formState.fieldErrors.status} onChange={(value) => updateForm(setForm, "status", value as AdministratorInput["status"])} />
         <SubmitRow saving={formState.saving} label={editingId ? "Update administrator" : "Create administrator"} onSubmit={submit} onCancel={editingId ? () => { setEditingId(null); setForm(emptyAdministratorForm); formState.clear(); } : undefined} />
       </FormCard>
-      <DataTable
-        title="School Administrators"
-        columns={["name", "email", "schoolName", "status"]}
-        data={list.data?.data ?? []}
-        loading={list.loading}
-        error={list.error}
-        pagination={list.data?.pagination}
-        sort={props.sort}
-        setSort={props.setSort}
-        setPage={props.setPage}
-        onEdit={edit}
-        actions={(row) => (
-          <>
-            <ActionButton label="Activate" icon={CheckCircle2} onClick={() => activate(row)} />
-            <ActionButton label="Suspend" icon={XCircle} danger onClick={() => suspend(row)} />
-          </>
-        )}
-      />
+      <div className="space-y-4">
+        <section className="rounded-lg border border-border bg-surface p-4 shadow-panel">
+          <SchoolSelect value={schoolFilter} schools={schools.data} loading={schools.loading} error={schools.error} onChange={setSchoolFilter} />
+        </section>
+        <DataTable
+          title="School Administrators"
+          columns={["name", "email", "schoolName", "status", "createdAt"]}
+          data={list.data?.data ?? []}
+          loading={list.loading}
+          error={list.error}
+          pagination={list.data?.pagination}
+          sort={props.sort}
+          setSort={props.setSort}
+          setPage={props.setPage}
+          onEdit={edit}
+          actions={(row) => (
+            <>
+              <ActionButton label="Activate" icon={CheckCircle2} onClick={() => activate(row)} />
+              <ActionButton label="Suspend" icon={XCircle} danger onClick={() => suspend(row)} />
+            </>
+          )}
+        />
+      </div>
     </div>
   );
 }
@@ -547,6 +630,32 @@ function ChartList({ title, rows, summary }: { title: string; rows: Array<{ labe
               <div className="mt-1 h-2 rounded-full bg-muted"><div className="h-2 rounded-full bg-primary" style={{ width: `${Math.max(4, (row.value / max) * 100)}%` }} /></div>
             </div>
           ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function MiniTable({ title, columns, rows }: { title: string; columns: string[]; rows: Row[] }) {
+  return (
+    <section className="overflow-hidden rounded-lg border border-border bg-background">
+      <div className="border-b border-border px-4 py-3">
+        <h3 className="text-sm font-semibold">{title}</h3>
+      </div>
+      {rows.length === 0 ? <EmptyPanel text={`No ${title.toLowerCase()} found.`} compact /> : (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[640px] text-left text-sm">
+            <thead className="bg-muted text-xs uppercase text-muted-foreground">
+              <tr>{columns.map((column) => <th key={column} className="px-4 py-3 font-semibold">{column}</th>)}</tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {rows.map((row) => (
+                <tr key={row.id ?? `${title}-${JSON.stringify(row)}`}>
+                  {columns.map((column) => <td key={column} className="px-4 py-3">{column === "status" ? <StatusBadge value={row[column]} /> : formatValue(row[column])}</td>)}
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </section>
@@ -757,7 +866,7 @@ function useValidatedSubmit<T extends object>() {
   };
 }
 
-function useList(endpoint: string, search: string, status: string, sort: SortState, page: number, refreshKey: number) {
+function useList(endpoint: string, search: string, status: string, sort: SortState, page: number, refreshKey: number, schoolId?: string) {
   const [data, setData] = useState<ApiList<Row> | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -765,13 +874,14 @@ function useList(endpoint: string, search: string, status: string, sort: SortSta
     const params = new URLSearchParams({ page: String(page), pageSize: "10", sortBy: sort.sortBy, sortDirection: sort.sortDirection });
     if (search) params.set("search", search);
     if (status) params.set("status", status);
+    if (schoolId) params.set("schoolId", schoolId);
     setLoading(true);
     setError(null);
     api(`${endpoint}?${params.toString()}`)
       .then(setData)
       .catch((caught) => setError(caught.message))
       .finally(() => setLoading(false));
-  }, [endpoint, search, status, sort.sortBy, sort.sortDirection, page, refreshKey]);
+  }, [endpoint, search, status, sort.sortBy, sort.sortDirection, page, refreshKey, schoolId]);
   return { data, loading, error };
 }
 
