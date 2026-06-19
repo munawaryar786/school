@@ -5,8 +5,8 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
-import { Prisma, RoleCode } from "@prisma/client";
-import { createSchoolSchema, PERMISSIONS, updateSchoolSchema } from "@school-erp/shared";
+import { Prisma } from "@prisma/client";
+import { administratorSchema, campusSchema, createSchoolSchema, PERMISSIONS, superAdminListQuerySchema, updateAdministratorSchema, updateCampusSchema, updateSchoolSchema } from "@school-erp/shared";
 import { prisma } from "../../db/prisma";
 import { ok, fail } from "../../http/responses";
 import { authenticate, requirePermission } from "../auth/auth.middleware";
@@ -15,21 +15,10 @@ import { AuditService } from "../audit/audit.service";
 const router = Router();
 const audit = new AuditService(prisma);
 
-const pageQuerySchema = z.object({
-  page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).default(10),
-  search: z.string().optional(),
-  status: z.string().optional(),
-  format: z.enum(["json", "csv"]).default("json")
-});
-
-const administratorSchema = z.object({
-  schoolId: z.string().min(1),
-  name: z.string().trim().min(2),
-  email: z.string().trim().email(),
-  password: z.string().min(8).optional(),
-  status: z.enum(["ACTIVE", "INVITED", "SUSPENDED"]).default("ACTIVE")
-});
+const pageQuerySchema = superAdminListQuerySchema;
+const schoolOrderFields = new Set(["name", "slug", "status", "createdAt", "updatedAt", "email"]);
+const campusOrderFields = new Set(["name", "code", "status", "createdAt", "updatedAt", "email"]);
+const membershipOrderFields = new Set(["status", "createdAt", "updatedAt"]);
 
 const planSchema = z.object({
   name: z.string().trim().min(2),
@@ -86,12 +75,75 @@ router.get("/overview", requirePermission(PERMISSIONS.SCHOOLS_READ), async (_req
   }
 });
 
+router.get("/dashboard", requirePermission(PERMISSIONS.SCHOOLS_READ), async (_req, res, next) => {
+  try {
+    const [
+      totalSchools,
+      activeSchools,
+      suspendedSchools,
+      totalCampuses,
+      totalUsers,
+      totalStudents,
+      totalStaff,
+      schoolsByStatus,
+      usersByRole,
+      recentAdministratorActivity
+    ] = await Promise.all([
+      prisma.school.count({ where: { deletedAt: null } }),
+      prisma.school.count({ where: { deletedAt: null, status: "ACTIVE" } }),
+      prisma.school.count({ where: { deletedAt: null, status: "SUSPENDED" } }),
+      prisma.campus.count({ where: { school: { deletedAt: null } } }),
+      prisma.user.count(),
+      prisma.studentProfile.count(),
+      prisma.schoolMembership.count({ where: { role: { code: { in: ["SCHOOL_ADMIN", "TEACHER", "STAFF", "FINANCE_OFFICER", "LIBRARIAN", "HR_OFFICER"] } } } }),
+      prisma.school.groupBy({ by: ["status"], where: { deletedAt: null }, _count: { _all: true }, orderBy: { status: "asc" } }),
+      prisma.schoolMembership.groupBy({ by: ["roleId"], _count: { _all: true }, orderBy: { roleId: "asc" } }),
+      prisma.auditLog.findMany({
+        where: { resource: { in: ["administrator", "school", "campus"] } },
+        include: { user: { select: { name: true, email: true } }, school: { select: { name: true } } },
+        orderBy: { createdAt: "desc" },
+        take: 8
+      })
+    ]);
+    const roleIds = usersByRole.map((item) => item.roleId);
+    const roles = roleIds.length ? await prisma.role.findMany({ where: { id: { in: roleIds } } }) : [];
+    const roleNameById = new Map(roles.map((role) => [role.id, role.code]));
+    return ok(res, {
+      metrics: {
+        totalSchools,
+        activeSchools,
+        suspendedSchools,
+        totalCampuses,
+        totalUsers,
+        totalStudents,
+        totalStaff
+      },
+      schoolsByStatus: schoolsByStatus.map((item) => ({ status: item.status, count: item._count._all })),
+      usersByRole: usersByRole.map((item) => ({ role: roleNameById.get(item.roleId) ?? item.roleId, count: item._count._all })),
+      recentAdministratorActivity: recentAdministratorActivity.map((item) => ({
+        id: item.id,
+        action: item.action,
+        resource: item.resource,
+        resourceId: item.resourceId,
+        schoolName: item.school?.name ?? null,
+        actorName: item.user?.name ?? null,
+        actorEmail: item.user?.email ?? null,
+        createdAt: item.createdAt
+      })),
+      lastUpdatedAt: new Date().toISOString()
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.get("/schools", requirePermission(PERMISSIONS.SCHOOLS_READ), async (req, res, next) => {
   try {
     const query = pageQuerySchema.parse(req.query);
+    const schoolStatus = parseEnumFilter(["ACTIVE", "TRIAL", "SUSPENDED", "ARCHIVED"], query.status);
     const where: Prisma.SchoolWhereInput = {
       deletedAt: null,
-      ...(query.status ? { status: query.status as never } : {}),
+      ...(schoolStatus ? { status: schoolStatus } : {}),
       ...(query.search
         ? {
             OR: [
@@ -106,7 +158,7 @@ router.get("/schools", requirePermission(PERMISSIONS.SCHOOLS_READ), async (req, 
       prisma.school.findMany({
         where,
         include: { subscriptions: { include: { plan: true }, orderBy: { createdAt: "desc" }, take: 1 } },
-        orderBy: { createdAt: "desc" },
+        orderBy: schoolOrderBy(query, schoolOrderFields),
         skip: (query.page - 1) * query.pageSize,
         take: query.pageSize
       }),
@@ -128,9 +180,26 @@ router.get("/schools", requirePermission(PERMISSIONS.SCHOOLS_READ), async (req, 
   }
 });
 
+router.get("/schools/:id", requirePermission(PERMISSIONS.SCHOOLS_READ), async (req, res, next) => {
+  try {
+    const school = await prisma.school.findFirst({
+      where: { id: routeId(req), deletedAt: null },
+      include: {
+        campuses: { orderBy: { createdAt: "desc" } },
+        memberships: { include: { user: { select: { name: true, email: true, isActive: true } }, role: true }, orderBy: { createdAt: "desc" }, take: 10 },
+        subscriptions: { include: { plan: true }, orderBy: { createdAt: "desc" }, take: 3 }
+      }
+    });
+    if (!school) return fail(res, 404, "NOT_FOUND", "School not found.");
+    return ok(res, school);
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.post("/schools", requirePermission(PERMISSIONS.SCHOOLS_CREATE), async (req, res, next) => {
   try {
-    const data = normalizeSchool(createSchoolSchema.parse(req.body));
+    const data = normalizeCreateSchool(createSchoolSchema.parse(req.body));
     const school = await prisma.school.create({ data });
     await writeAudit(req, "CREATE", "school", school.id, { name: school.name });
     return ok(res, school, 201);
@@ -142,7 +211,7 @@ router.post("/schools", requirePermission(PERMISSIONS.SCHOOLS_CREATE), async (re
 
 router.patch("/schools/:id", requirePermission(PERMISSIONS.SCHOOLS_UPDATE), async (req, res, next) => {
   try {
-    const data = normalizeSchool(updateSchoolSchema.parse(req.body));
+    const data = normalizeUpdateSchool(updateSchoolSchema.parse(req.body));
     const school = await prisma.school.update({ where: { id: routeId(req) }, data });
     await writeAudit(req, "UPDATE", "school", school.id, data);
     return ok(res, school);
@@ -161,13 +230,130 @@ router.delete("/schools/:id", requirePermission(PERMISSIONS.SCHOOLS_DELETE), asy
   }
 });
 
+router.post("/schools/:id/activate", requirePermission(PERMISSIONS.SCHOOLS_UPDATE), async (req, res, next) => {
+  try {
+    const school = await prisma.school.update({ where: { id: routeId(req) }, data: { status: "ACTIVE", deletedAt: null } });
+    await writeAudit(req, "UPDATE", "school", school.id, { status: "ACTIVE" });
+    return ok(res, school);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/schools/:id/suspend", requirePermission(PERMISSIONS.SCHOOLS_UPDATE), async (req, res, next) => {
+  try {
+    const school = await prisma.school.update({ where: { id: routeId(req) }, data: { status: "SUSPENDED" } });
+    await writeAudit(req, "UPDATE", "school", school.id, { status: "SUSPENDED" });
+    return ok(res, school);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/campuses", requirePermission(PERMISSIONS.SCHOOLS_READ), async (req, res, next) => {
+  try {
+    const query = pageQuerySchema.parse(req.query);
+    const campusStatus = parseEnumFilter(["ACTIVE", "INACTIVE", "ARCHIVED"], query.status);
+    const where: Prisma.CampusWhereInput = {
+      school: { deletedAt: null },
+      ...(campusStatus ? { status: campusStatus } : {}),
+      ...(query.search
+        ? {
+            OR: [
+              { name: { contains: query.search, mode: "insensitive" } },
+              { code: { contains: query.search, mode: "insensitive" } },
+              { email: { contains: query.search, mode: "insensitive" } },
+              { school: { name: { contains: query.search, mode: "insensitive" } } }
+            ]
+          }
+        : {})
+    };
+    const [rows, total] = await Promise.all([
+      prisma.campus.findMany({
+        where,
+        include: { school: { select: { name: true, slug: true, status: true } } },
+        orderBy: schoolOrderBy(query, campusOrderFields),
+        skip: (query.page - 1) * query.pageSize,
+        take: query.pageSize
+      }),
+      prisma.campus.count({ where })
+    ]);
+    const data = rows.map((campus) => ({ ...campus, schoolName: campus.school.name, schoolSlug: campus.school.slug }));
+    if (query.format === "csv") return csv(res, "campuses.csv", data);
+    return paginated(res, data, query.page, query.pageSize, total);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/campuses/:id", requirePermission(PERMISSIONS.SCHOOLS_READ), async (req, res, next) => {
+  try {
+    const campus = await prisma.campus.findUnique({ where: { id: routeId(req) }, include: { school: { select: { name: true, slug: true, status: true } } } });
+    if (!campus) return fail(res, 404, "NOT_FOUND", "Campus not found.");
+    return ok(res, { ...campus, schoolName: campus.school.name, schoolSlug: campus.school.slug });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/campuses", requirePermission(PERMISSIONS.SCHOOLS_CREATE), async (req, res, next) => {
+  try {
+    const parsed = campusSchema.parse(req.body);
+    const input = {
+      ...parsed,
+      code: parsed.code.toUpperCase(),
+      email: parsed.email || null
+    };
+    const school = await prisma.school.findFirst({ where: { id: input.schoolId, deletedAt: null } });
+    if (!school) return fail(res, 404, "NOT_FOUND", "School not found.");
+    const campus = await prisma.campus.create({ data: input });
+    await writeAudit(req, "CREATE", "campus", campus.id, { schoolId: campus.schoolId, name: campus.name });
+    return ok(res, campus, 201);
+  } catch (error) {
+    if (isUniqueError(error)) return fail(res, 409, "CONFLICT", "Campus code already exists for this school.");
+    next(error);
+  }
+});
+
+router.patch("/campuses/:id", requirePermission(PERMISSIONS.SCHOOLS_UPDATE), async (req, res, next) => {
+  try {
+    const parsed = updateCampusSchema.parse(req.body);
+    const input = {
+      ...parsed,
+      ...(parsed.code ? { code: parsed.code.toUpperCase() } : {}),
+      ...(parsed.email !== undefined ? { email: parsed.email || null } : {})
+    };
+    if (input.schoolId) {
+      const school = await prisma.school.findFirst({ where: { id: input.schoolId, deletedAt: null } });
+      if (!school) return fail(res, 404, "NOT_FOUND", "School not found.");
+    }
+    const campus = await prisma.campus.update({ where: { id: routeId(req) }, data: input });
+    await writeAudit(req, "UPDATE", "campus", campus.id, input);
+    return ok(res, campus);
+  } catch (error) {
+    if (isUniqueError(error)) return fail(res, 409, "CONFLICT", "Campus code already exists for this school.");
+    next(error);
+  }
+});
+
+router.delete("/campuses/:id", requirePermission(PERMISSIONS.SCHOOLS_DELETE), async (req, res, next) => {
+  try {
+    const campus = await prisma.campus.update({ where: { id: routeId(req) }, data: { status: "ARCHIVED" } });
+    await writeAudit(req, "DELETE", "campus", campus.id, { name: campus.name, schoolId: campus.schoolId });
+    return ok(res, { deleted: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.get("/administrators", requirePermission(PERMISSIONS.ADMINS_MANAGE), async (req, res, next) => {
   try {
     const query = pageQuerySchema.parse(req.query);
     const schoolRole = await prisma.role.findUniqueOrThrow({ where: { code: "SCHOOL_ADMIN" } });
+    const adminStatus = parseEnumFilter(["ACTIVE", "INVITED", "SUSPENDED"], query.status);
     const where: Prisma.SchoolMembershipWhereInput = {
       roleId: schoolRole.id,
-      ...(query.status ? { status: query.status as never } : {}),
+      ...(adminStatus ? { status: adminStatus } : {}),
       ...(query.search
         ? {
             OR: [
@@ -182,7 +368,7 @@ router.get("/administrators", requirePermission(PERMISSIONS.ADMINS_MANAGE), asyn
       prisma.schoolMembership.findMany({
         where,
         include: { user: true, school: true, role: true },
-        orderBy: { createdAt: "desc" },
+        orderBy: membershipOrderBy(query),
         skip: (query.page - 1) * query.pageSize,
         take: query.pageSize
       }),
@@ -200,6 +386,31 @@ router.get("/administrators", requirePermission(PERMISSIONS.ADMINS_MANAGE), asyn
     }));
     if (query.format === "csv") return csv(res, "administrators.csv", data);
     return paginated(res, data, query.page, query.pageSize, total);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/administrators/:id", requirePermission(PERMISSIONS.ADMINS_MANAGE), async (req, res, next) => {
+  try {
+    const membership = await prisma.schoolMembership.findUnique({
+      where: { id: routeId(req) },
+      include: { user: { select: { id: true, name: true, email: true, isActive: true } }, school: { select: { id: true, name: true, slug: true } }, role: true }
+    });
+    if (!membership || membership.role.code !== "SCHOOL_ADMIN") return fail(res, 404, "NOT_FOUND", "Administrator not found.");
+    return ok(res, {
+      id: membership.id,
+      userId: membership.userId,
+      schoolId: membership.schoolId,
+      name: membership.user.name,
+      email: membership.user.email,
+      schoolName: membership.school?.name ?? "Platform",
+      schoolSlug: membership.school?.slug ?? null,
+      status: membership.status,
+      isActive: membership.user.isActive,
+      createdAt: membership.createdAt,
+      updatedAt: membership.updatedAt
+    });
   } catch (error) {
     next(error);
   }
@@ -231,15 +442,20 @@ router.post("/administrators", requirePermission(PERMISSIONS.ADMINS_MANAGE), asy
 
 router.patch("/administrators/:id", requirePermission(PERMISSIONS.ADMINS_MANAGE), async (req, res, next) => {
   try {
-    const input = administratorSchema.partial().parse(req.body);
-    const membership = await prisma.schoolMembership.update({ where: { id: routeId(req) }, data: { status: input.status } });
+    const input = updateAdministratorSchema.parse(req.body);
+    if (input.schoolId) {
+      const school = await prisma.school.findFirst({ where: { id: input.schoolId, deletedAt: null } });
+      if (!school) return fail(res, 404, "NOT_FOUND", "School not found.");
+    }
+    const membership = await prisma.schoolMembership.update({ where: { id: routeId(req) }, data: { ...(input.schoolId ? { schoolId: input.schoolId } : {}), ...(input.status ? { status: input.status } : {}) } });
     if (input.name || input.email || input.password) {
       await prisma.user.update({
         where: { id: membership.userId },
         data: {
           ...(input.name ? { name: input.name } : {}),
           ...(input.email ? { email: input.email.toLowerCase() } : {}),
-          ...(input.password ? { passwordHash: await bcrypt.hash(input.password, 12) } : {})
+          ...(input.password ? { passwordHash: await bcrypt.hash(input.password, 12) } : {}),
+          ...(input.status ? { isActive: input.status === "ACTIVE" } : {})
         }
       });
     }
@@ -255,6 +471,17 @@ router.delete("/administrators/:id", requirePermission(PERMISSIONS.ADMINS_MANAGE
     const membership = await prisma.schoolMembership.update({ where: { id: routeId(req) }, data: { status: "SUSPENDED" } });
     await writeAudit(req, "DELETE", "administrator", membership.id, {});
     return ok(res, { deleted: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/administrators/:id/activate", requirePermission(PERMISSIONS.ADMINS_MANAGE), async (req, res, next) => {
+  try {
+    const membership = await prisma.schoolMembership.update({ where: { id: routeId(req) }, data: { status: "ACTIVE" } });
+    await prisma.user.update({ where: { id: membership.userId }, data: { isActive: true } });
+    await writeAudit(req, "UPDATE", "administrator", membership.id, { status: "ACTIVE" });
+    return ok(res, { updated: true });
   } catch (error) {
     next(error);
   }
@@ -535,12 +762,38 @@ router.post("/backups/:id/restore", requirePermission(PERMISSIONS.BACKUPS_MANAGE
   }
 });
 
-function normalizeSchool<T extends { email?: string; website?: string }>(data: T) {
+function normalizeCreateSchool<T extends { email?: string; website?: string }>(data: T) {
   return {
     ...data,
     email: data.email || null,
     website: data.website || null
   };
+}
+
+function normalizeUpdateSchool<T extends { email?: string; website?: string }>(data: T) {
+  return {
+    ...data,
+    ...(data.email !== undefined ? { email: data.email || null } : {}),
+    ...(data.website !== undefined ? { website: data.website || null } : {})
+  };
+}
+
+function schoolOrderBy(query: z.infer<typeof pageQuerySchema>, allowed: Set<string>) {
+  const sortBy = allowed.has(query.sortBy) ? query.sortBy : "createdAt";
+  return { [sortBy]: query.sortDirection } as Record<string, "asc" | "desc">;
+}
+
+function membershipOrderBy(query: z.infer<typeof pageQuerySchema>) {
+  if (membershipOrderFields.has(query.sortBy)) {
+    return { [query.sortBy]: query.sortDirection } as Record<string, "asc" | "desc">;
+  }
+  if (query.sortBy === "name") return { user: { name: query.sortDirection } } as const;
+  if (query.sortBy === "email") return { user: { email: query.sortDirection } } as const;
+  return { createdAt: "desc" } as const;
+}
+
+function parseEnumFilter<T extends string>(allowed: readonly T[], value?: string) {
+  return allowed.includes(value as T) ? (value as T) : undefined;
 }
 
 function paginated<T>(res: Parameters<typeof ok<T[]>>[0], data: T[], page: number, pageSize: number, total: number) {
