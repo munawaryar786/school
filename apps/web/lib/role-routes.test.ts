@@ -4,6 +4,7 @@ import { backendModuleUrl, backendUrl } from "./api-routing.ts";
 import { homePathForRole, roleHomePath } from "./role-routes.ts";
 import { canAccessRoute, findProtectedPrefix, protectedPrefixes, routeAccess } from "./route-policy.ts";
 import { administratorSchema } from "@school-erp/shared";
+import { ensureArray, formatNumber, normalizeDashboardData } from "./super-admin-dashboard.ts";
 import { backendPatternFromTarget, backendRouteKey, superAdminBackendRoutes, superAdminUiRequests } from "./super-admin-routes.ts";
 
 assert.equal(homePathForRole(ROLES.FINANCE_OFFICER), "/finance");
@@ -63,3 +64,40 @@ for (const request of superAdminUiRequests) {
   const backendPattern = backendPatternFromTarget(request.backendPath);
   assert.ok(backendRoutes.has(backendRouteKey(request.method, backendPattern)), `${request.action} points to missing backend route ${request.method} ${backendPattern}`);
 }
+
+const missingMetricsDashboard = normalizeDashboardData({});
+assert.equal(missingMetricsDashboard.metrics.totalSchools, 0);
+assert.equal(missingMetricsDashboard.metrics.totalAdministrators, 0);
+assert.deepEqual(missingMetricsDashboard.recentAdministratorActivity, []);
+assert.deepEqual(missingMetricsDashboard.schoolsByStatus, []);
+assert.deepEqual(missingMetricsDashboard.usersByRole, []);
+
+const partialDashboard = normalizeDashboardData({
+  metrics: {
+    totalSchools: 12
+  },
+  schoolsByStatus: [{ status: "ACTIVE", count: null }],
+  usersByRole: [{ role: "SCHOOL_ADMIN", count: undefined }],
+  recentAdministratorActivity: null
+});
+assert.equal(partialDashboard.metrics.totalSchools, 12);
+assert.equal(partialDashboard.metrics.totalAdministrators, 0);
+assert.equal(partialDashboard.schoolsByStatus[0].count, 0);
+assert.equal(partialDashboard.usersByRole[0].count, 0);
+assert.equal(formatNumber(partialDashboard.metrics.totalAdministrators), "0");
+assert.equal(formatNumber(ensureArray(partialDashboard.recentAdministratorActivity).length), "0");
+
+const nullCountsDashboard = normalizeDashboardData({
+  metrics: {
+    totalAdministrators: null,
+    activeAdministrators: undefined,
+    suspendedAdministrators: Number.NaN
+  }
+});
+assert.equal(nullCountsDashboard.metrics.totalAdministrators, 0);
+assert.equal(nullCountsDashboard.metrics.activeAdministrators, 0);
+assert.equal(nullCountsDashboard.metrics.suspendedAdministrators, 0);
+assert.equal(formatNumber(null), "0");
+assert.equal(formatNumber(undefined), "0");
+assert.equal(formatNumber(Number.NaN), "0");
+assert.equal(formatNumber(1234), "1,234");

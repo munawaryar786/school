@@ -37,6 +37,7 @@ import {
   type CampusInput,
   type CreateSchoolInput
 } from "@school-erp/shared";
+import { ensureArray, formatNumber, normalizeDashboardData, type SuperAdminDashboardData } from "../../lib/super-admin-dashboard";
 
 type ApiList<T> = { success: true; data: T[]; pagination?: PaginationMeta };
 type ApiOne<T> = { success: true; data: T };
@@ -44,17 +45,6 @@ type PaginationMeta = { page: number; pageSize: number; total: number; totalPage
 type FieldErrors<T extends object> = Partial<Record<keyof T, string>>;
 type SortState = { sortBy: string; sortDirection: "asc" | "desc" };
 type Row = Record<string, any>;
-
-type DashboardData = {
-  metrics: Record<
-    "totalSchools" | "activeSchools" | "suspendedSchools" | "archivedSchools" | "totalCampuses" | "totalAdministrators" | "activeAdministrators" | "suspendedAdministrators" | "totalUsers" | "totalStudents" | "totalStaff",
-    number
-  >;
-  schoolsByStatus: Array<{ status: string; count: number }>;
-  usersByRole: Array<{ role: string; count: number }>;
-  recentAdministratorActivity: Array<{ id: string; action: string; resource: string; resourceId: string | null; actorName: string | null; actorEmail: string | null; schoolName: string | null; createdAt: string }>;
-  lastUpdatedAt: string;
-};
 
 type SchoolDetailData = Row & {
   counts?: Partial<Record<"campuses" | "users" | "teachers" | "students" | "parents" | "libraryBooks" | "administrators", number>>;
@@ -161,23 +151,28 @@ export function SuperAdminPortal() {
 }
 
 function DashboardSection({ refreshKey }: { refreshKey: number }) {
-  const { data, loading, error, retry } = useOne<DashboardData>("dashboard", refreshKey);
+  const { data, loading, error, retry } = useOne<SuperAdminDashboardData>("dashboard", refreshKey);
   if (loading) return <LoadingPanel text="Loading Super Admin metrics" />;
   if (error) return <ErrorPanel text={error} onRetry={retry} />;
   if (!data) return <EmptyPanel text="No dashboard data is available." />;
 
+  const dashboard = normalizeDashboardData(data);
+  const { metrics: dashboardMetrics } = dashboard;
+  const schoolsByStatus = ensureArray(dashboard.schoolsByStatus);
+  const usersByRole = ensureArray(dashboard.usersByRole);
+  const recentAdministratorActivity = ensureArray(dashboard.recentAdministratorActivity);
   const metrics = [
-    ["Total schools", data.metrics.totalSchools, "All school tenants including archived records", Building2],
-    ["Active schools", data.metrics.activeSchools, "Schools currently available to users", CheckCircle2],
-    ["Suspended schools", data.metrics.suspendedSchools, "Schools blocked from normal operations", ShieldAlert],
-    ["Archived schools", data.metrics.archivedSchools, "Schools archived from normal tenant lists", Archive],
-    ["Total campuses", data.metrics.totalCampuses, "Campus records across active tenant history", Landmark],
-    ["School administrators", data.metrics.totalAdministrators, "Assigned school administrator memberships", UserCog],
-    ["Active administrators", data.metrics.activeAdministrators, "Administrators who can currently operate schools", ShieldCheck],
-    ["Suspended administrators", data.metrics.suspendedAdministrators, "Administrators blocked from school operations", ShieldAlert],
-    ["Total users", data.metrics.totalUsers, "Platform user accounts", Users],
-    ["Total students", data.metrics.totalStudents, "Student profiles across schools", Users],
-    ["Total staff", data.metrics.totalStaff, "Staff and operational memberships", UserCog]
+    ["Total schools", dashboardMetrics.totalSchools, "All school tenants including archived records", Building2],
+    ["Active schools", dashboardMetrics.activeSchools, "Schools currently available to users", CheckCircle2],
+    ["Suspended schools", dashboardMetrics.suspendedSchools, "Schools blocked from normal operations", ShieldAlert],
+    ["Archived schools", dashboardMetrics.archivedSchools, "Schools archived from normal tenant lists", Archive],
+    ["Total campuses", dashboardMetrics.totalCampuses, "Campus records across active tenant history", Landmark],
+    ["School administrators", dashboardMetrics.totalAdministrators, "Assigned school administrator memberships", UserCog],
+    ["Active administrators", dashboardMetrics.activeAdministrators, "Administrators who can currently operate schools", ShieldCheck],
+    ["Suspended administrators", dashboardMetrics.suspendedAdministrators, "Administrators blocked from school operations", ShieldAlert],
+    ["Total users", dashboardMetrics.totalUsers, "Platform user accounts", Users],
+    ["Total students", dashboardMetrics.totalStudents, "Student profiles across schools", Users],
+    ["Total staff", dashboardMetrics.totalStaff, "Staff and operational memberships", UserCog]
   ] as const;
 
   return (
@@ -189,33 +184,33 @@ function DashboardSection({ refreshKey }: { refreshKey: number }) {
               <p className="text-sm font-medium text-muted-foreground">{label}</p>
               <span className="flex h-9 w-9 items-center justify-center rounded-md bg-primary/10 text-primary"><Icon aria-hidden={true} size={18} /></span>
             </div>
-            <p className="mt-3 text-3xl font-semibold">{value.toLocaleString()}</p>
+            <p className="mt-3 text-3xl font-semibold">{formatNumber(value)}</p>
             <p className="mt-2 text-xs leading-5 text-muted-foreground">{description}</p>
           </section>
         ))}
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">
-        <QuickActionCard title="Create school" detail={`${data.metrics.totalSchools.toLocaleString()} schools currently tracked`} icon={Plus} />
-        <QuickActionCard title="Create administrator" detail={`${data.metrics.totalAdministrators.toLocaleString()} administrators currently assigned`} icon={UserCog} />
-        <QuickActionCard title="Review activity" detail={`${data.recentAdministratorActivity.length.toLocaleString()} recent platform events loaded`} icon={Activity} />
+        <QuickActionCard title="Create school" detail={`${formatNumber(dashboardMetrics.totalSchools)} schools currently tracked`} icon={Plus} />
+        <QuickActionCard title="Create administrator" detail={`${formatNumber(dashboardMetrics.totalAdministrators)} administrators currently assigned`} icon={UserCog} />
+        <QuickActionCard title="Review activity" detail={`${formatNumber(recentAdministratorActivity.length)} recent platform events loaded`} icon={Activity} />
       </div>
 
       <div className="grid gap-4 xl:grid-cols-2">
-        <ChartList title="Schools by status" rows={data.schoolsByStatus.map((item) => ({ label: item.status, value: item.count }))} summary={`Schools are currently distributed across ${data.schoolsByStatus.length} status groups.`} />
-        <ChartList title="Users by role" rows={data.usersByRole.map((item) => ({ label: item.role, value: item.count }))} summary={`User memberships are currently distributed across ${data.usersByRole.length} role groups.`} />
+        <ChartList title="Schools by status" rows={schoolsByStatus.map((item) => ({ label: item.status, value: item.count }))} summary={`Schools are currently distributed across ${formatNumber(schoolsByStatus.length)} status groups.`} />
+        <ChartList title="Users by role" rows={usersByRole.map((item) => ({ label: item.role, value: item.count }))} summary={`User memberships are currently distributed across ${formatNumber(usersByRole.length)} role groups.`} />
       </div>
 
       <section className="rounded-lg border border-border bg-surface shadow-panel">
         <div className="border-b border-border px-4 py-3">
           <h2 className="text-base font-semibold">Recent administrator activity</h2>
-          <p className="mt-1 text-xs text-muted-foreground">Last updated {formatDate(data.lastUpdatedAt)}</p>
+          <p className="mt-1 text-xs text-muted-foreground">Last updated {dashboard.lastUpdatedAt ? formatDate(dashboard.lastUpdatedAt) : "Not available"}</p>
         </div>
-        {data.recentAdministratorActivity.length === 0 ? (
+        {recentAdministratorActivity.length === 0 ? (
           <EmptyPanel text="No recent administrator activity found." compact />
         ) : (
           <div className="divide-y divide-border">
-            {data.recentAdministratorActivity.map((item) => (
+            {recentAdministratorActivity.map((item) => (
               <div key={item.id} className="flex flex-col gap-1 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <p className="font-medium">{item.action} {item.resource}</p>
@@ -294,7 +289,7 @@ function SchoolDetailPanel({ schoolId, refreshKey, onClose }: { schoolId: string
         {countCards.map(([label, value]) => (
           <div key={label} className="rounded-md border border-border bg-background p-3">
             <p className="text-xs uppercase text-muted-foreground">{label}</p>
-            <p className="mt-1 text-2xl font-semibold">{value.toLocaleString()}</p>
+            <p className="mt-1 text-2xl font-semibold">{formatNumber(value)}</p>
           </div>
         ))}
       </div>
