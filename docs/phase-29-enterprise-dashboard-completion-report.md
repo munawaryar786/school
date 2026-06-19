@@ -14,6 +14,7 @@ Current completed slice:
 - Enterprise shell foundation started.
 - Super Admin Create School flow hardened with shared validation and clearer UI states.
 - Slice 2 Super Admin operational implementation added schools, campuses, administrator workflows, and real dashboard aggregates.
+- Slice 2 stabilization added a Super Admin route matrix and fixed the administrator workflow to use a real school selector instead of raw school IDs.
 
 Critical acceptance tests have not passed end to end, so no feature is marked `Verified`.
 
@@ -21,6 +22,7 @@ Critical acceptance tests have not passed end to end, so no feature is marked `V
 
 - `docs/phase-29-enterprise-dashboard-checklist.md`
 - `docs/phase-29-enterprise-dashboard-completion-report.md`
+- `docs/phase-29-super-admin-route-matrix.md`
 - `packages/shared/src/schemas.ts`
 - `packages/shared/src/index.ts`
 - `packages/shared/src/theme.ts`
@@ -30,6 +32,7 @@ Critical acceptance tests have not passed end to end, so no feature is marked `V
 - `apps/web/components/layout/app-shell.tsx`
 - `apps/web/components/super-admin/super-admin-portal.tsx`
 - `apps/web/lib/role-routes.test.ts`
+- `apps/web/lib/super-admin-routes.ts`
 - `apps/api/src/modules/super-admin/super-admin.routes.test.ts`
 - `packages/shared/src/schemas.test.ts`
 - `prisma/schema.prisma`
@@ -49,6 +52,9 @@ Critical acceptance tests have not passed end to end, so no feature is marked `V
 - `AdministratorsSection` inside `SuperAdminPortal`
 - `DataTable` with sorting/action support inside `SuperAdminPortal`
 - `ChartList` for real aggregate chart summaries inside `SuperAdminPortal`
+- `QuickActionCard` backed by dashboard API counts inside `SuperAdminPortal`
+- `SchoolSelect` backed by `GET /api/super-admin/schools`
+- `StatusBadge` backed by row status values
 - `FormCard`, `SelectField`, `TextAreaField`, `DetailPanel`, `LoadingPanel`, `EmptyPanel`, and `ErrorPanel` inside `SuperAdminPortal`
 
 These are currently local component extractions, not yet exported from `packages/ui`.
@@ -75,6 +81,7 @@ Changed API behavior:
 - Super Admin school list supports server-side sorting through validated query fields.
 - Super Admin administrator create/update now reuse shared administrator schemas.
 - Super Admin dashboard returns real aggregate counts, status distributions, role distributions, and recent audit activity.
+- Administrator and campus forms now depend on `GET /api/super-admin/schools?page=1&pageSize=100&sortBy=name&sortDirection=asc` for tenant selection.
 
 Preserved:
 
@@ -106,6 +113,7 @@ Improved but not fully verified:
 - Activate, suspend, and archive school actions are implemented.
 - Campus create/edit/archive flow is implemented with database-backed campus records.
 - School administrator create/edit/activate/suspend flow is implemented.
+- Administrator create/edit now uses a real school selector, so the UI no longer asks users to type raw `schoolId`.
 - Pagination, search, filtering, sorting, empty, loading, error, and retry states are implemented for the Super Admin operational sections.
 
 Not verified against a live database in this run.
@@ -116,6 +124,8 @@ Not verified against a live database in this run.
 - Dashboard cards use real API data for total schools, active schools, suspended schools, campuses, users, students, and staff.
 - Dashboard chart summaries use real API data for schools by status and users by role.
 - Recent administrator activity uses real audit log data.
+- Quick action cards use dashboard API counts and loaded activity count; no static counters were added.
+- Status badges use real row status values from the list APIs.
 
 Not fully verified in browser or against a live database in this run.
 
@@ -158,6 +168,7 @@ Failure reason:
 
 - Shared package build passed.
 - Web focused route/theme regression passed.
+- Web focused Super Admin route parity, route target generation, and administrator payload validation passed.
 - UI typecheck passed.
 - Shared typecheck passed.
 - Web typecheck passed.
@@ -182,6 +193,7 @@ Failure reason:
 - Cross-tenant access tests.
 - Full API typecheck.
 - Targeted API route test execution.
+- Live preview verification after this stabilization pass.
 - Root production build.
 - Role E2E tests.
 
@@ -228,6 +240,20 @@ Still pending:
 - Object-level authorization tests.
 - Export authorization tests.
 - Sensitive log redaction review.
+
+## Slice 2 Stabilization Route-Not-Found Root Cause
+
+The preview `Route not found` errors came from frontend calls to Slice 2 Super Admin paths while the backend serving `/v1/super-admin/*` did not have matching deployed handlers and generated Prisma Client support yet. The source now contains the matching handlers, but production/preview must deploy the API and apply/regenerate Prisma for `Campus`.
+
+Routes involved:
+
+- `GET /api/super-admin/dashboard` -> `GET /v1/super-admin/dashboard`
+- `GET/POST/PATCH/DELETE /api/super-admin/campuses...` -> `/v1/super-admin/campuses...`
+- `POST /api/super-admin/schools/:id/activate` -> `POST /v1/super-admin/schools/:id/activate`
+- `POST /api/super-admin/schools/:id/suspend` -> `POST /v1/super-admin/schools/:id/suspend`
+- `POST /api/super-admin/administrators/:id/activate` -> `POST /v1/super-admin/administrators/:id/activate`
+
+Administrator creation had an additional UI issue: it required a manually typed `schoolId`. The form now uses a real school selector populated from the schools API.
 
 ## Git Status
 

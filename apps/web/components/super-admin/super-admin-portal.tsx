@@ -53,6 +53,8 @@ type DashboardData = {
   lastUpdatedAt: string;
 };
 
+type SchoolOption = { id: string; name: string; slug: string; status: string };
+
 const sections = [
   { id: "dashboard", label: "Dashboard", icon: BarChart3 },
   { id: "schools", label: "Schools", icon: Building2 },
@@ -154,27 +156,34 @@ function DashboardSection({ refreshKey }: { refreshKey: number }) {
   if (!data) return <EmptyPanel text="No dashboard data is available." />;
 
   const metrics = [
-    ["Total schools", data.metrics.totalSchools, Building2],
-    ["Active schools", data.metrics.activeSchools, CheckCircle2],
-    ["Suspended schools", data.metrics.suspendedSchools, ShieldAlert],
-    ["Total campuses", data.metrics.totalCampuses, Landmark],
-    ["Total users", data.metrics.totalUsers, Users],
-    ["Total students", data.metrics.totalStudents, Users],
-    ["Total staff", data.metrics.totalStaff, UserCog]
+    ["Total schools", data.metrics.totalSchools, "All non-archived school tenants", Building2],
+    ["Active schools", data.metrics.activeSchools, "Schools currently available to users", CheckCircle2],
+    ["Suspended schools", data.metrics.suspendedSchools, "Schools blocked from normal operations", ShieldAlert],
+    ["Total campuses", data.metrics.totalCampuses, "Campus records across active tenant history", Landmark],
+    ["Total users", data.metrics.totalUsers, "Platform user accounts", Users],
+    ["Total students", data.metrics.totalStudents, "Student profiles across schools", Users],
+    ["Total staff", data.metrics.totalStaff, "Staff and operational memberships", UserCog]
   ] as const;
 
   return (
     <div className="space-y-5">
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        {metrics.map(([label, value, Icon]) => (
+        {metrics.map(([label, value, description, Icon]) => (
           <section key={label} className="rounded-lg border border-border bg-surface p-4 shadow-panel">
             <div className="flex items-center justify-between gap-3">
               <p className="text-sm font-medium text-muted-foreground">{label}</p>
-              <Icon aria-hidden={true} className="text-primary" size={18} />
+              <span className="flex h-9 w-9 items-center justify-center rounded-md bg-primary/10 text-primary"><Icon aria-hidden={true} size={18} /></span>
             </div>
             <p className="mt-3 text-3xl font-semibold">{value.toLocaleString()}</p>
+            <p className="mt-2 text-xs leading-5 text-muted-foreground">{description}</p>
           </section>
         ))}
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-3">
+        <QuickActionCard title="Create school" detail={`${data.metrics.totalSchools.toLocaleString()} schools currently tracked`} icon={Plus} />
+        <QuickActionCard title="Create administrator" detail={`${data.metrics.totalUsers.toLocaleString()} user accounts available`} icon={UserCog} />
+        <QuickActionCard title="Review activity" detail={`${data.recentAdministratorActivity.length.toLocaleString()} recent platform events loaded`} icon={Activity} />
       </div>
 
       <div className="grid gap-4 xl:grid-cols-2">
@@ -204,6 +213,20 @@ function DashboardSection({ refreshKey }: { refreshKey: number }) {
         )}
       </section>
     </div>
+  );
+}
+
+function QuickActionCard({ title, detail, icon: Icon }: { title: string; detail: string; icon: React.ComponentType<{ size?: number; "aria-hidden"?: boolean }> }) {
+  return (
+    <section className="rounded-lg border border-border bg-surface p-4 shadow-panel">
+      <div className="flex items-center gap-3">
+        <span className="flex h-10 w-10 items-center justify-center rounded-md bg-primary/10 text-primary"><Icon aria-hidden={true} size={18} /></span>
+        <div>
+          <h2 className="text-sm font-semibold">{title}</h2>
+          <p className="mt-1 text-xs text-muted-foreground">{detail}</p>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -282,6 +305,7 @@ function CampusesSection(props: ListSectionProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const formState = useValidatedSubmit<CampusInput>();
   const list = useList("campuses", props.search, props.status, props.sort, props.page, props.refreshKey);
+  const schools = useSchoolOptions(props.refreshKey);
 
   function edit(row: Row) {
     setEditingId(row.id);
@@ -310,7 +334,7 @@ function CampusesSection(props: ListSectionProps) {
   return (
     <div className="grid gap-4 xl:grid-cols-[390px_1fr]">
       <FormCard title={editingId ? "Edit Campus" : "Create Campus"} error={formState.summaryError}>
-        <TextField label="School ID" value={form.schoolId} error={formState.fieldErrors.schoolId} onChange={(value) => updateForm(setForm, "schoolId", value)} />
+        <SchoolSelect value={form.schoolId} schools={schools.data} loading={schools.loading} error={schools.error} fieldError={formState.fieldErrors.schoolId} onChange={(value) => updateForm(setForm, "schoolId", value)} />
         <TextField label="Campus name" value={form.name} error={formState.fieldErrors.name} onChange={(value) => updateForm(setForm, "name", value)} />
         <TextField label="Code" value={form.code} error={formState.fieldErrors.code} onChange={(value) => updateForm(setForm, "code", value.toUpperCase())} />
         <SelectField label="Status" value={form.status} options={["ACTIVE", "INACTIVE", "ARCHIVED"]} error={formState.fieldErrors.status} onChange={(value) => updateForm(setForm, "status", value as CampusInput["status"])} />
@@ -329,6 +353,7 @@ function AdministratorsSection(props: ListSectionProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const formState = useValidatedSubmit<AdministratorInput>();
   const list = useList("administrators", props.search, props.status, props.sort, props.page, props.refreshKey);
+  const schools = useSchoolOptions(props.refreshKey);
 
   function edit(row: Row) {
     setEditingId(row.id);
@@ -362,7 +387,7 @@ function AdministratorsSection(props: ListSectionProps) {
   return (
     <div className="grid gap-4 xl:grid-cols-[390px_1fr]">
       <FormCard title={editingId ? "Edit Administrator" : "Create Administrator"} error={formState.summaryError}>
-        <TextField label="School ID" value={form.schoolId} error={formState.fieldErrors.schoolId} onChange={(value) => updateForm(setForm, "schoolId", value)} />
+        <SchoolSelect value={form.schoolId} schools={schools.data} loading={schools.loading} error={schools.error} fieldError={formState.fieldErrors.schoolId} onChange={(value) => updateForm(setForm, "schoolId", value)} />
         <TextField label="Name" value={form.name} error={formState.fieldErrors.name} onChange={(value) => updateForm(setForm, "name", value)} />
         <TextField label="Email" value={form.email} error={formState.fieldErrors.email} inputMode="email" onChange={(value) => updateForm(setForm, "email", value)} />
         <TextField label="Password" value={form.password ?? ""} error={formState.fieldErrors.password} helper={editingId ? "Leave blank to keep the current password." : "Minimum 8 characters."} onChange={(value) => updateForm(setForm, "password", value)} />
@@ -476,7 +501,7 @@ function DataTable({
             <tbody className="divide-y divide-border">
               {data.map((row) => (
                 <tr key={row.id}>
-                  {columns.map((column) => <td key={column} className="px-4 py-3">{formatValue(row[column])}</td>)}
+                  {columns.map((column) => <td key={column} className="px-4 py-3">{column === "status" ? <StatusBadge value={row[column]} /> : formatValue(row[column])}</td>)}
                   <td className="px-4 py-3">
                     <div className="flex flex-wrap justify-end gap-2">
                       {onView ? <ActionButton label="View" icon={Eye} onClick={() => onView(row)} /> : null}
@@ -500,6 +525,12 @@ function DataTable({
       ) : null}
     </section>
   );
+}
+
+function StatusBadge({ value }: { value: unknown }) {
+  const text = formatValue(value) || "UNKNOWN";
+  const tone = text === "ACTIVE" ? "border-success/30 bg-success/10 text-success" : text === "SUSPENDED" || text === "ARCHIVED" ? "border-error/30 bg-error/10 text-error" : text === "TRIAL" || text === "INVITED" ? "border-warning/30 bg-warning/10 text-warning" : "border-border bg-muted text-muted-foreground";
+  return <span className={`inline-flex rounded-full border px-2 py-1 text-xs font-medium ${tone}`}>{text}</span>;
 }
 
 function ChartList({ title, rows, summary }: { title: string; rows: Array<{ label: string; value: number }>; summary: string }) {
@@ -618,6 +649,20 @@ function SelectField({ label, value, options, error, onChange }: { label: string
       <select className={`h-11 w-full rounded-md border bg-background px-3 text-sm ${error ? "border-error" : "border-border"}`} value={value} onChange={(event) => onChange(event.target.value)}>
         {options.map((option) => <option key={option} value={option}>{option}</option>)}
       </select>
+      {error ? <span className="mt-1 block text-sm text-error">{error}</span> : null}
+    </label>
+  );
+}
+
+function SchoolSelect({ value, schools, loading, error, fieldError, onChange }: { value: string; schools: SchoolOption[]; loading: boolean; error: string | null; fieldError?: string; onChange: (value: string) => void }) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-sm font-medium">School</span>
+      <select className={`h-11 w-full rounded-md border bg-background px-3 text-sm ${fieldError ? "border-error" : "border-border"}`} value={value} onChange={(event) => onChange(event.target.value)} disabled={loading || Boolean(error)}>
+        <option value="">{loading ? "Loading schools" : error ? "Schools unavailable" : "Select school"}</option>
+        {schools.map((school) => <option key={school.id} value={school.id}>{school.name} ({school.slug})</option>)}
+      </select>
+      {fieldError ? <span className="mt-1 block text-sm text-error">{fieldError}</span> : null}
       {error ? <span className="mt-1 block text-sm text-error">{error}</span> : null}
     </label>
   );
@@ -755,6 +800,21 @@ function useSimpleList(endpoint: string, refreshKey: number) {
     setError(null);
     api(endpoint).then(setData).catch((caught) => setError(caught.message)).finally(() => setLoading(false));
   }, [endpoint, refreshKey]);
+  return { data, loading, error };
+}
+
+function useSchoolOptions(refreshKey: number) {
+  const [data, setData] = useState<SchoolOption[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    setLoading(true);
+    setError(null);
+    api("schools?page=1&pageSize=100&sortBy=name&sortDirection=asc")
+      .then((payload: ApiList<Row>) => setData(payload.data.map((school) => ({ id: school.id, name: school.name, slug: school.slug, status: school.status }))))
+      .catch((caught) => setError(caught.message))
+      .finally(() => setLoading(false));
+  }, [refreshKey]);
   return { data, loading, error };
 }
 
