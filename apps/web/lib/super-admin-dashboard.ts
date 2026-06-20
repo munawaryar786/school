@@ -34,6 +34,9 @@ export type SuperAdminDashboardData = {
   metrics?: Partial<Record<SuperAdminMetricKey, number | null | undefined>> | null;
   schoolsByStatus?: Array<{ status: string; count: number | null | undefined }> | null;
   usersByRole?: Array<{ role: string; count: number | null | undefined }> | null;
+  newSchoolsOverTime?: Array<{ key?: string; label: string; count: number | null | undefined }> | null;
+  campusesPerSchool?: Array<{ schoolId: string; schoolName: string; count: number | null | undefined }> | null;
+  administratorStatusSummary?: Array<{ status: string; count: number | null | undefined }> | null;
   recentAdministratorActivity?: SuperAdminDashboardActivity[] | null;
   lastUpdatedAt?: string | null;
 };
@@ -60,10 +63,17 @@ export function ensureArray<T>(value: T[] | null | undefined): T[] {
   return Array.isArray(value) ? value : [];
 }
 
+function safeCount(value: number | null | undefined) {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
 export function normalizeDashboardData(data: SuperAdminDashboardData | null | undefined): {
   metrics: SuperAdminMetricMap;
   schoolsByStatus: Array<{ status: string; count: number }>;
   usersByRole: Array<{ role: string; count: number }>;
+  newSchoolsOverTime: Array<{ key?: string; label: string; count: number }>;
+  campusesPerSchool: Array<{ schoolId: string; schoolName: string; count: number }>;
+  administratorStatusSummary: Array<{ status: string; count: number }>;
   recentAdministratorActivity: SuperAdminDashboardActivity[];
   lastUpdatedAt: string | null;
 } {
@@ -79,11 +89,25 @@ export function normalizeDashboardData(data: SuperAdminDashboardData | null | un
     metrics,
     schoolsByStatus: ensureArray(data?.schoolsByStatus).map((item) => ({
       status: item.status,
-      count: typeof item.count === "number" && Number.isFinite(item.count) ? item.count : 0
+      count: safeCount(item.count)
     })),
     usersByRole: ensureArray(data?.usersByRole).map((item) => ({
       role: item.role,
-      count: typeof item.count === "number" && Number.isFinite(item.count) ? item.count : 0
+      count: safeCount(item.count)
+    })),
+    newSchoolsOverTime: ensureArray(data?.newSchoolsOverTime).map((item) => ({
+      key: item.key,
+      label: item.label,
+      count: safeCount(item.count)
+    })),
+    campusesPerSchool: ensureArray(data?.campusesPerSchool).map((item) => ({
+      schoolId: item.schoolId,
+      schoolName: item.schoolName,
+      count: safeCount(item.count)
+    })),
+    administratorStatusSummary: ensureArray(data?.administratorStatusSummary).map((item) => ({
+      status: item.status,
+      count: safeCount(item.count)
     })),
     recentAdministratorActivity: ensureArray(data?.recentAdministratorActivity),
     lastUpdatedAt: data?.lastUpdatedAt ?? null

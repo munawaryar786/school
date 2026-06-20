@@ -1,253 +1,277 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { BookOpen, CalendarCheck, CalendarDays, Download, GraduationCap, Library, Loader2, Plus, RefreshCw, Save, Search, Trash2, UserRoundCheck, Users, WalletCards } from "lucide-react";
+import { useEffect, useState } from "react";
+import {
+  BookOpen,
+  CalendarCheck,
+  CalendarDays,
+  ClipboardList,
+  GraduationCap,
+  Library,
+  Megaphone,
+  RefreshCw,
+  School,
+  Settings,
+  ShieldCheck,
+  TableProperties,
+  UserRoundCheck,
+  Users,
+  WalletCards
+} from "lucide-react";
+import { formatNumber } from "../../lib/super-admin-dashboard";
+import { normalizeSchoolAdminDashboard, type SchoolAdminDashboardData } from "../../lib/school-admin-dashboard";
 
-type ResourceId = "dashboard" | "academic-years" | "classes" | "sections" | "subjects" | "teachers" | "students" | "fees" | "exams" | "attendance" | "library" | "timetable";
-type Row = Record<string, any>;
-type ApiList<T> = { success: true; data: T[]; pagination?: { page: number; pageSize: number; total: number; totalPages: number } };
+type ModuleId =
+  | "dashboard"
+  | "teachers"
+  | "students"
+  | "parents"
+  | "classes"
+  | "sections"
+  | "subjects"
+  | "attendance"
+  | "timetable"
+  | "exams"
+  | "fees"
+  | "library"
+  | "notices"
+  | "reports"
+  | "settings";
+
 type ApiOne<T> = { success: true; data: T };
 
-const resources: Array<{ id: ResourceId; label: string; icon: any; columns: string[]; form: Row; status: string[] }> = [
-  { id: "dashboard", label: "Dashboard", icon: GraduationCap, columns: [], form: {}, status: [] },
-  { id: "academic-years", label: "Academic Years", icon: CalendarDays, columns: ["name", "startsOn", "endsOn", "status"], form: { name: "2026-2027", startsOn: "2026-08-01", endsOn: "2027-06-30", status: "ACTIVE" }, status: ["", "ACTIVE", "CLOSED"] },
-  { id: "classes", label: "Classes", icon: BookOpen, columns: ["name", "code", "status"], form: { name: "Grade 1", code: "G1", status: "ACTIVE" }, status: ["", "ACTIVE", "INACTIVE"] },
-  { id: "sections", label: "Sections", icon: Users, columns: ["classId", "name", "capacity", "status"], form: { classId: "", name: "A", capacity: 40, status: "ACTIVE" }, status: ["", "ACTIVE", "INACTIVE"] },
-  { id: "subjects", label: "Subjects", icon: BookOpen, columns: ["name", "code", "type", "status"], form: { name: "Mathematics", code: "MATH", type: "CORE", status: "ACTIVE" }, status: ["", "ACTIVE", "INACTIVE"] },
-  { id: "teachers", label: "Teachers", icon: UserRoundCheck, columns: ["employeeNumber", "name", "email", "phone", "specialization", "status"], form: { employeeNumber: "T-1001", name: "Teacher Name", email: "teacher.phase4@example.com", phone: "555-0110", specialization: "Mathematics", status: "ACTIVE" }, status: ["", "ACTIVE", "INACTIVE"] },
-  { id: "students", label: "Students", icon: GraduationCap, columns: ["admissionNumber", "name", "guardianName", "guardianPhone", "className", "status"], form: { admissionNumber: "S-1001", name: "Student Name", guardianName: "Guardian Name", guardianPhone: "555-0120", className: "Grade 1", status: "ACTIVE" }, status: ["", "ACTIVE", "INACTIVE"] },
-  { id: "fees", label: "Fees", icon: WalletCards, columns: ["title", "amount", "dueDate", "status"], form: { title: "Monthly Tuition", amount: 25000, dueDate: "2026-06-30", status: "PENDING" }, status: ["", "PENDING", "PAID", "OVERDUE"] },
-  { id: "exams", label: "Exams", icon: CalendarCheck, columns: ["name", "subject", "examDate", "status"], form: { name: "Mid Term", subject: "Mathematics", examDate: "2026-09-15", status: "SCHEDULED" }, status: ["", "SCHEDULED", "COMPLETED", "CANCELLED"] },
-  { id: "attendance", label: "Attendance", icon: CalendarCheck, columns: ["personName", "personType", "attendanceDate", "status"], form: { personName: "Student Name", personType: "STUDENT", attendanceDate: "2026-06-12", status: "PRESENT" }, status: ["", "PRESENT", "ABSENT", "LATE"] },
-  { id: "library", label: "Library", icon: Library, columns: ["title", "author", "isbn", "copies", "status"], form: { title: "Learning Handbook", author: "Academic Team", isbn: "ISBN-1001", copies: 5, status: "AVAILABLE" }, status: ["", "AVAILABLE", "ISSUED", "DAMAGED"] },
-  { id: "timetable", label: "Timetable", icon: CalendarDays, columns: ["className", "subject", "teacher", "dayOfWeek", "startsAt", "endsAt", "status"], form: { className: "Grade 1", subject: "Mathematics", teacher: "Teacher Name", dayOfWeek: "Monday", startsAt: "09:00", endsAt: "09:45", status: "ACTIVE" }, status: ["", "ACTIVE", "INACTIVE"] }
+type IconType = React.ComponentType<{ size?: number; "aria-hidden"?: boolean; className?: string }>;
+
+const modules: Array<{ id: ModuleId; label: string; icon: IconType; summary: string }> = [
+  { id: "dashboard", label: "Dashboard", icon: GraduationCap, summary: "Real school metrics and analytics." },
+  { id: "teachers", label: "Teachers", icon: UserRoundCheck, summary: "Teacher account and assignment workflows are scheduled for the next slice." },
+  { id: "students", label: "Students", icon: GraduationCap, summary: "Student records, parent links, and class assignment are scheduled for the next slice." },
+  { id: "parents", label: "Parents", icon: Users, summary: "Parent accounts and linked-child access are scheduled for the next slice." },
+  { id: "classes", label: "Classes", icon: School, summary: "Academic setup implementation is intentionally not started in this pass." },
+  { id: "sections", label: "Sections", icon: TableProperties, summary: "Section setup will be wired after the dashboard foundation is validated." },
+  { id: "subjects", label: "Subjects/Courses", icon: BookOpen, summary: "Course setup and teacher assignment are scheduled for the academic setup slice." },
+  { id: "attendance", label: "Attendance", icon: CalendarCheck, summary: "Attendance marking and reports are not exposed until the attendance slice." },
+  { id: "timetable", label: "Timetable", icon: CalendarDays, summary: "Timetable creation is pending a dedicated implementation slice." },
+  { id: "exams", label: "Exams", icon: ClipboardList, summary: "Exam schedules, marks, and results are pending a dedicated slice." },
+  { id: "fees", label: "Fees", icon: WalletCards, summary: "Fee setup and payment workflows are pending a dedicated slice." },
+  { id: "library", label: "Library", icon: Library, summary: "Book management is pending a dedicated library slice." },
+  { id: "notices", label: "Notices", icon: Megaphone, summary: "Communication workflows are pending a dedicated notices slice." },
+  { id: "reports", label: "Reports", icon: ClipboardList, summary: "Reports will use real database queries in a later slice." },
+  { id: "settings", label: "Settings", icon: Settings, summary: "School settings are pending a dedicated settings slice." }
 ];
 
 export function SchoolAdminPortal() {
-  const [resource, setResource] = useState<ResourceId>("dashboard");
-  const [search, setSearch] = useState("");
-  const [status, setStatus] = useState("");
-  const [page, setPage] = useState(1);
+  const [activeModule, setActiveModule] = useState<ModuleId>("dashboard");
   const [refreshKey, setRefreshKey] = useState(0);
-  const [message, setMessage] = useState<string | null>(null);
-  const active = resources.find((item) => item.id === resource)!;
-
-  useEffect(() => {
-    setSearch("");
-    setStatus("");
-    setPage(1);
-  }, [resource]);
 
   return (
-    <div className="theme-school-admin space-y-5">
-      <header className="flex flex-col gap-4 border-b border-border pb-5 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          <p className="text-sm font-medium text-primary">School Admin</p>
-          <h1 className="mt-1 text-3xl font-semibold tracking-normal">School operations</h1>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
-            Manage academics, people, fees, exams, attendance, library, and timetable records for the active school.
-          </p>
+    <div className="theme-school-admin grid gap-5 lg:grid-cols-[260px_1fr]">
+      <aside className="rounded-lg border border-border bg-surface p-3 shadow-panel lg:sticky lg:top-4 lg:self-start">
+        <div className="border-b border-border px-2 pb-3">
+          <p className="text-xs font-semibold uppercase text-muted-foreground">School Admin</p>
+          <p className="mt-1 text-lg font-semibold">Operations</p>
         </div>
-        <button className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-border bg-surface px-4 text-sm font-medium" onClick={() => setRefreshKey((value) => value + 1)}>
-          <RefreshCw aria-hidden={true} size={16} />
-          Refresh
-        </button>
-      </header>
+        <nav className="mt-3 grid gap-1" aria-label="School Admin modules">
+          {modules.map((item) => {
+            const Icon = item.icon;
+            const isActive = activeModule === item.id;
+            return (
+              <button
+                key={item.id}
+                className={`flex h-10 items-center gap-2 rounded-md px-3 text-left text-sm font-medium ${isActive ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
+                onClick={() => setActiveModule(item.id)}
+                type="button"
+              >
+                <Icon aria-hidden={true} size={16} />
+                <span className="truncate">{item.label}</span>
+              </button>
+            );
+          })}
+        </nav>
+      </aside>
 
-      <nav className="flex gap-2 overflow-x-auto border-b border-border" aria-label="School Admin modules">
-        {resources.map((item) => {
-          const Icon = item.icon;
-          return (
-            <button key={item.id} className={`inline-flex h-11 shrink-0 items-center gap-2 border-b-2 px-3 text-sm font-medium ${resource === item.id ? "border-primary text-primary" : "border-transparent text-muted-foreground"}`} onClick={() => setResource(item.id)}>
-              <Icon aria-hidden={true} size={16} />
-              {item.label}
-            </button>
-          );
-        })}
-      </nav>
+      <main className="min-w-0 space-y-5">
+        <header className="flex flex-col gap-4 border-b border-border pb-5 md:flex-row md:items-end md:justify-between">
+          <div>
+            <p className="text-sm font-medium text-primary">School Admin</p>
+            <h1 className="mt-1 text-3xl font-semibold tracking-normal">School dashboard</h1>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
+              Real school-scoped metrics, analytics, and safe module entry points for the assigned tenant.
+            </p>
+          </div>
+          <button className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-border bg-surface px-4 text-sm font-medium" onClick={() => setRefreshKey((value) => value + 1)} type="button">
+            <RefreshCw aria-hidden={true} size={16} />
+            Refresh
+          </button>
+        </header>
 
-      {message ? <div className="rounded-md border border-success/25 bg-success/10 px-4 py-3 text-sm text-success">{message}</div> : null}
-
-      {resource === "dashboard" ? <Dashboard refreshKey={refreshKey} /> : (
-        <>
-          <Toolbar active={active} search={search} setSearch={setSearch} status={status} setStatus={setStatus} />
-          <CrudPanel active={active} search={search} status={status} page={page} setPage={setPage} refreshKey={refreshKey} onDone={(text) => { setMessage(text); setRefreshKey((value) => value + 1); }} />
-        </>
-      )}
+        {activeModule === "dashboard" ? <Dashboard refreshKey={refreshKey} /> : <ComingSoon module={modules.find((item) => item.id === activeModule)!} />}
+      </main>
     </div>
   );
 }
 
 function Dashboard({ refreshKey }: { refreshKey: number }) {
-  const { data, loading, error } = useSimple<ApiOne<Row>>("dashboard", refreshKey);
-  const cards = resources.filter((item) => item.id !== "dashboard");
-  if (loading) return <State text="Loading dashboard" />;
-  if (error) return <State text={error} tone="error" />;
-  return (
-    <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-      {cards.map((item) => {
-        const Icon = item.icon;
-        return (
-          <article key={item.id} className="rounded-lg border border-border bg-surface p-5 shadow-sm">
-            <div className="flex h-10 w-10 items-center justify-center rounded-md bg-primary/10 text-primary"><Icon aria-hidden={true} size={20} /></div>
-            <p className="mt-4 text-sm text-muted-foreground">{item.label}</p>
-            <p className="mt-1 text-3xl font-semibold">{data?.data?.[item.id === "academic-years" ? "academicYears" : item.id] ?? 0}</p>
-          </article>
-        );
-      })}
-    </section>
-  );
-}
+  const { data, loading, error, retry } = useDashboard(refreshKey);
+  if (loading) return <StatePanel text="Loading school dashboard" />;
+  if (error) return <StatePanel text={error} tone="error" onRetry={retry} />;
+  if (!data) return <StatePanel text="No school dashboard data is available." />;
 
-function Toolbar({ active, search, setSearch, status, setStatus }: { active: (typeof resources)[number]; search: string; setSearch: (value: string) => void; status: string; setStatus: (value: string) => void }) {
-  return (
-    <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4 sm:flex-row sm:items-center">
-      <label className="relative min-w-0 flex-1">
-        <Search aria-hidden={true} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={16} />
-        <input className="h-10 w-full rounded-md border border-border bg-background pl-9 pr-3 text-sm" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={`Search ${active.label.toLowerCase()}`} />
-      </label>
-      <select className="h-10 rounded-md border border-border bg-background px-3 text-sm" value={status} onChange={(event) => setStatus(event.target.value)}>
-        {active.status.map((item) => <option key={item || "all"} value={item}>{item || "All statuses"}</option>)}
-      </select>
-      <button className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-border bg-background px-4 text-sm font-medium" onClick={() => exportCsv(active.id, search, status)}>
-        <Download aria-hidden={true} size={16} />
-        Export
-      </button>
-    </div>
-  );
-}
+  const dashboard = normalizeSchoolAdminDashboard(data);
+  const metricCards = [
+    ["Campuses", dashboard.metrics.campuses, "Campus records scoped to this school", School],
+    ["Teachers", dashboard.metrics.teachers, "Teacher profiles in this school", UserRoundCheck],
+    ["Students", dashboard.metrics.students, "Student profiles in this school", GraduationCap],
+    ["Parents", dashboard.metrics.parents, "Active parent memberships in this school", Users],
+    ["Classes", dashboard.metrics.classes, "Class records in this school", School],
+    ["Sections", dashboard.metrics.sections, "Section records in this school", TableProperties],
+    ["Subjects/Courses", dashboard.metrics.subjects, "Subject records in this school", BookOpen],
+    ["Library books", dashboard.metrics.libraryBooks, "Book records in this school", Library]
+  ] as const;
 
-function CrudPanel({ active, search, status, page, setPage, refreshKey, onDone }: { active: (typeof resources)[number]; search: string; status: string; page: number; setPage: (page: number) => void; refreshKey: number; onDone: (message: string) => void }) {
-  const [form, setForm] = useState<Row>(active.form);
-  const { data, loading, error } = useList(active.id, search, status, page, refreshKey);
-  useEffect(() => setForm(active.form), [active.id]);
-  async function submit() {
-    await api(active.id, { method: "POST", body: JSON.stringify(coerceForm(form)) });
-    setForm(active.form);
-    onDone(`${active.label} record saved.`);
-  }
   return (
-    <div className="grid gap-4 xl:grid-cols-[360px_1fr]">
-      <FormPanel title={`Create ${active.label}`} form={form} setForm={setForm} onSubmit={submit} />
-      <DataTable active={active} data={data?.data ?? []} loading={loading} error={error} pagination={data?.pagination} setPage={setPage} onDelete={async (row) => { await api(`${active.id}/${row.id}`, { method: "DELETE" }); onDone(`${active.label} record deleted.`); }} />
-    </div>
-  );
-}
+    <div className="space-y-5">
+      <section className="rounded-lg border border-border bg-surface p-5 shadow-panel">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h2 className="text-xl font-semibold">{dashboard.school?.name ?? "Assigned school"}</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {dashboard.school?.slug ? `${dashboard.school.slug} - ` : ""}{dashboard.school?.status ?? "Status unavailable"}
+            </p>
+          </div>
+          <div className="inline-flex items-center gap-2 rounded-md border border-success/25 bg-success/10 px-3 py-2 text-sm text-success">
+            <ShieldCheck aria-hidden={true} size={16} />
+            School-scoped access
+          </div>
+        </div>
+      </section>
 
-function FormPanel({ title, form, setForm, onSubmit }: { title: string; form: Row; setForm: (form: Row) => void; onSubmit: () => Promise<void> }) {
-  const [saving, setSaving] = useState(false);
-  return (
-    <section className="rounded-lg border border-border bg-surface p-4 shadow-sm">
-      <h2 className="text-base font-semibold">{title}</h2>
-      <div className="mt-4 space-y-3">
-        {Object.entries(form).map(([key, value]) => (
-          <label key={key} className="block">
-            <span className="mb-1 block text-xs font-medium uppercase text-muted-foreground">{key}</span>
-            <input className="h-10 w-full rounded-md border border-border bg-background px-3 text-sm" value={String(value ?? "")} onChange={(event) => setForm({ ...form, [key]: event.target.value })} />
-          </label>
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {metricCards.map(([label, value, detail, Icon]) => (
+          <section key={label} className="rounded-lg border border-border bg-surface p-4 shadow-panel">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-sm font-medium text-muted-foreground">{label}</p>
+              <span className="flex h-9 w-9 items-center justify-center rounded-md bg-primary/10 text-primary"><Icon aria-hidden={true} size={18} /></span>
+            </div>
+            <p className="mt-3 text-3xl font-semibold">{formatNumber(value)}</p>
+            <p className="mt-2 text-xs leading-5 text-muted-foreground">{detail}</p>
+          </section>
         ))}
       </div>
-      <button className="mt-4 inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-semibold text-primary-foreground disabled:opacity-65" disabled={saving} onClick={async () => { setSaving(true); try { await onSubmit(); } finally { setSaving(false); } }}>
-        {saving ? <Loader2 aria-hidden={true} className="animate-spin" size={16} /> : <Save aria-hidden={true} size={16} />}
-        Save
-      </button>
+
+      <div className="grid gap-4 xl:grid-cols-2">
+        <BarChart title="Students by class" rows={dashboard.studentsByClass.map((item) => ({ label: item.label, value: item.count }))} emptyText="No student class distribution is available yet." />
+        <BarChart title="Admissions by status" rows={dashboard.admissionsByStatus.map((item) => ({ label: item.status, value: item.count }))} emptyText="No admission applications are available yet." />
+        <BarChart title="Fee status summary" rows={dashboard.feeStatusSummary.map((item) => ({ label: item.status, value: item.count }))} emptyText="No fee records are available yet." />
+        <BarChart title="Library status summary" rows={dashboard.libraryStatusSummary.map((item) => ({ label: item.status, value: item.count }))} emptyText="No library book records are available yet." />
+        <BarChart title="Attendance status summary" rows={dashboard.attendanceByStatus.map((item) => ({ label: item.status, value: item.count }))} emptyText="No attendance records are available yet." />
+        <BarChart title="Exam status summary" rows={dashboard.examStatusSummary.map((item) => ({ label: item.status, value: item.count }))} emptyText="No exam records are available yet." />
+      </div>
+
+      <section className="rounded-lg border border-border bg-surface shadow-panel">
+        <div className="border-b border-border px-4 py-3">
+          <h2 className="text-base font-semibold">Recent school activity</h2>
+          <p className="mt-1 text-xs text-muted-foreground">Last updated {dashboard.lastUpdatedAt ? formatDate(dashboard.lastUpdatedAt) : "Not available"}</p>
+        </div>
+        {dashboard.recentActivity.length === 0 ? (
+          <StatePanel text="No recent school activity found." compact />
+        ) : (
+          <div className="divide-y divide-border">
+            {dashboard.recentActivity.map((item) => (
+              <div key={item.id} className="flex flex-col gap-1 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="font-medium">{item.action} {item.resource}</p>
+                  <p className="text-muted-foreground">{item.actorName ?? item.actorEmail ?? "System"}</p>
+                </div>
+                <time className="text-xs text-muted-foreground">{formatDate(item.createdAt)}</time>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function ComingSoon({ module }: { module: (typeof modules)[number] }) {
+  const Icon = module.icon;
+  return (
+    <section className="rounded-lg border border-border bg-surface p-6 shadow-panel">
+      <div className="flex max-w-3xl items-start gap-4">
+        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary"><Icon aria-hidden={true} size={20} /></span>
+        <div>
+          <p className="text-sm font-medium text-primary">Coming Soon</p>
+          <h2 className="mt-1 text-xl font-semibold">{module.label}</h2>
+          <p className="mt-2 text-sm leading-6 text-muted-foreground">{module.summary}</p>
+        </div>
+      </div>
     </section>
   );
 }
 
-function DataTable({ active, data, loading, error, pagination, setPage, onDelete }: { active: (typeof resources)[number]; data: Row[]; loading: boolean; error: string | null; pagination?: { page: number; totalPages: number; total: number }; setPage: (page: number) => void; onDelete: (row: Row) => Promise<void> }) {
+function BarChart({ title, rows, emptyText }: { title: string; rows: Array<{ label: string; value: number }>; emptyText: string }) {
+  const max = Math.max(...rows.map((row) => row.value), 1);
   return (
-    <section className="overflow-hidden rounded-lg border border-border bg-surface shadow-sm">
-      <div className="flex items-center justify-between border-b border-border px-4 py-3">
-        <h2 className="text-base font-semibold">{active.label}</h2>
-        {pagination ? <span className="text-xs text-muted-foreground">{pagination.total} records</span> : null}
-      </div>
-      {loading ? <State text="Loading records" /> : error ? <State text={error} tone="error" /> : data.length === 0 ? <State text="No records found" /> : (
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[760px] text-left text-sm">
-            <thead className="bg-muted text-xs uppercase text-muted-foreground">
-              <tr>{active.columns.map((column) => <th key={column} className="px-4 py-3 font-semibold">{column}</th>)}<th className="px-4 py-3 text-right font-semibold">Actions</th></tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {data.map((row) => (
-                <tr key={row.id}>
-                  {active.columns.map((column) => <td key={column} className="px-4 py-3">{formatValue(row[column])}</td>)}
-                  <td className="px-4 py-3 text-right">
-                    <button className="inline-flex rounded-md border border-border p-2 text-danger" onClick={() => onDelete(row)} aria-label="Delete"><Trash2 aria-hidden={true} size={14} /></button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+    <section className="rounded-lg border border-border bg-surface p-4 shadow-panel">
+      <h2 className="text-base font-semibold">{title}</h2>
+      {rows.length === 0 ? <StatePanel text={emptyText} compact /> : (
+        <div className="mt-4 space-y-3">
+          {rows.map((row) => (
+            <div key={row.label}>
+              <div className="flex items-center justify-between gap-3 text-sm">
+                <span className="truncate font-medium">{row.label}</span>
+                <span className="text-muted-foreground">{formatNumber(row.value)}</span>
+              </div>
+              <div className="mt-1 h-2 rounded-full bg-muted">
+                <div className="h-2 rounded-full bg-primary" style={{ width: `${Math.max(4, (row.value / max) * 100)}%` }} />
+              </div>
+            </div>
+          ))}
         </div>
       )}
-      {pagination ? (
-        <div className="flex items-center justify-end gap-2 border-t border-border px-4 py-3">
-          <button className="rounded-md border border-border px-3 py-1 text-sm disabled:opacity-50" disabled={pagination.page <= 1} onClick={() => setPage(pagination.page - 1)}>Previous</button>
-          <span className="text-sm text-muted-foreground">Page {pagination.page} of {pagination.totalPages || 1}</span>
-          <button className="rounded-md border border-border px-3 py-1 text-sm disabled:opacity-50" disabled={pagination.page >= pagination.totalPages} onClick={() => setPage(pagination.page + 1)}>Next</button>
-        </div>
-      ) : null}
     </section>
   );
 }
 
-function State({ text, tone }: { text: string; tone?: "error" }) {
-  return <div className={`rounded-lg border border-border bg-surface p-6 text-sm ${tone === "error" ? "text-danger" : "text-muted-foreground"}`}>{text}</div>;
+function StatePanel({ text, tone, compact, onRetry }: { text: string; tone?: "error"; compact?: boolean; onRetry?: () => void }) {
+  return (
+    <div className={`rounded-lg border ${tone === "error" ? "border-error/30 bg-error/10 text-error" : "border-border bg-surface text-muted-foreground"} ${compact ? "mt-4 p-4" : "p-6"} text-sm`} role={tone === "error" ? "alert" : undefined}>
+      {text}
+      {onRetry ? <button className="ml-3 rounded-md border border-border px-3 py-1" onClick={onRetry} type="button">Retry</button> : null}
+    </div>
+  );
 }
 
-function useList(endpoint: string, search: string, status: string, page: number, refreshKey: number) {
-  const [data, setData] = useState<ApiList<Row> | null>(null);
+function useDashboard(refreshKey: number) {
+  const [data, setData] = useState<SchoolAdminDashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    const params = new URLSearchParams({ page: String(page), pageSize: "10" });
-    if (search) params.set("search", search);
-    if (status) params.set("status", status);
-    setLoading(true);
-    api(`${endpoint}?${params.toString()}`).then(setData).catch((caught) => setError(caught.message)).finally(() => setLoading(false));
-  }, [endpoint, search, status, page, refreshKey]);
-  return { data, loading, error };
-}
-
-function useSimple<T>(endpoint: string, refreshKey: number) {
-  const [data, setData] = useState<T | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [retryKey, setRetryKey] = useState(0);
   useEffect(() => {
     setLoading(true);
-    api(endpoint).then(setData).catch((caught) => setError(caught.message)).finally(() => setLoading(false));
-  }, [endpoint, refreshKey]);
-  return { data, loading, error };
+    setError(null);
+    api("dashboard")
+      .then((payload: ApiOne<SchoolAdminDashboardData>) => setData(payload.data))
+      .catch((caught) => setError(caught instanceof Error ? caught.message : "Request failed."))
+      .finally(() => setLoading(false));
+  }, [refreshKey, retryKey]);
+  return { data, loading, error, retry: () => setRetryKey((value) => value + 1) };
 }
 
-async function api(path: string, init?: RequestInit) {
-  const response = await fetch(`/api/school-admin/${path}`, { ...init, headers: { "content-type": "application/json", ...(init?.headers ?? {}) } });
+async function api(path: string) {
+  const response = await fetch(`/api/school-admin/${path}`, { headers: { "content-type": "application/json" } });
   const contentType = response.headers.get("content-type") ?? "";
   const payload = contentType.includes("application/json") ? await response.json() : await response.text();
   if (!response.ok || payload.success === false) throw new Error(payload.error?.message ?? "Request failed.");
   return payload;
 }
 
-function exportCsv(resource: ResourceId, search: string, status: string) {
-  const params = new URLSearchParams({ format: "csv", pageSize: "100" });
-  if (search) params.set("search", search);
-  if (status) params.set("status", status);
-  window.location.href = `/api/school-admin/${resource}?${params.toString()}`;
+function formatDate(value: string) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "Not available" : new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(date);
 }
 
-function coerceForm(form: Row) {
-  return Object.fromEntries(Object.entries(form).map(([key, value]) => {
-    if (["capacity", "amount", "copies"].includes(key)) return [key, Number(value)];
-    return [key, value];
-  }));
-}
 
-function formatValue(value: unknown) {
-  if (value === null || value === undefined) return "";
-  if (typeof value === "boolean") return value ? "Yes" : "No";
-  if (typeof value === "object") return JSON.stringify(value);
-  const text = String(value);
-  return text.length > 70 ? `${text.slice(0, 67)}...` : text;
-}
+
+
 

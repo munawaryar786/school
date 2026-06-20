@@ -5,8 +5,10 @@ import { homePathForRole, roleHomePath } from "./role-routes.ts";
 import { canAccessRoute, findProtectedPrefix, protectedPrefixes, routeAccess } from "./route-policy.ts";
 import { administratorSchema } from "@school-erp/shared";
 import { ensureArray, formatNumber, normalizeDashboardData } from "./super-admin-dashboard.ts";
+import { normalizeSchoolAdminDashboard } from "./school-admin-dashboard.ts";
 import { backendPatternFromTarget, backendRouteKey, superAdminBackendRoutes, superAdminUiRequests } from "./super-admin-routes.ts";
 
+assert.equal(homePathForRole(ROLES.SCHOOL_ADMIN), "/school-admin");
 assert.equal(homePathForRole(ROLES.FINANCE_OFFICER), "/finance");
 assert.equal(homePathForRole(ROLES.LIBRARIAN), "/library");
 assert.equal(homePathForRole(ROLES.HR_OFFICER), "/hr");
@@ -26,6 +28,8 @@ assert.equal(findProtectedPrefix("/not-protected"), null);
 assert.equal(canAccessRoute(ROLES.FINANCE_OFFICER, "/finance"), true);
 assert.equal(canAccessRoute(ROLES.FINANCE_OFFICER, "/advanced-finance"), true);
 assert.equal(canAccessRoute(ROLES.FINANCE_OFFICER, "/super-admin"), false);
+assert.equal(canAccessRoute(ROLES.SCHOOL_ADMIN, "/school-admin"), true);
+assert.equal(canAccessRoute(ROLES.SCHOOL_ADMIN, "/super-admin"), false);
 assert.equal(canAccessRoute(ROLES.HR_OFFICER, "/hr"), true);
 assert.equal(canAccessRoute(ROLES.LIBRARIAN, "/library"), true);
 assert.equal(canAccessRoute(ROLES.STUDENT, "/parent"), false);
@@ -101,3 +105,32 @@ assert.equal(formatNumber(null), "0");
 assert.equal(formatNumber(undefined), "0");
 assert.equal(formatNumber(Number.NaN), "0");
 assert.equal(formatNumber(1234), "1,234");
+const analyticsDashboard = normalizeDashboardData({
+  newSchoolsOverTime: [{ key: "2026-06", label: "Jun 2026", count: null }],
+  campusesPerSchool: [{ schoolId: "school_1", schoolName: "Demo School", count: undefined }],
+  administratorStatusSummary: [{ status: "ACTIVE", count: Number.NaN }]
+});
+assert.equal(analyticsDashboard.newSchoolsOverTime[0].count, 0);
+assert.equal(analyticsDashboard.campusesPerSchool[0].count, 0);
+assert.equal(analyticsDashboard.administratorStatusSummary[0].count, 0);
+
+const missingSchoolAdminDashboard = normalizeSchoolAdminDashboard({});
+assert.equal(missingSchoolAdminDashboard.metrics.campuses, 0);
+assert.equal(missingSchoolAdminDashboard.metrics.parents, 0);
+assert.deepEqual(missingSchoolAdminDashboard.studentsByClass, []);
+assert.deepEqual(missingSchoolAdminDashboard.recentActivity, []);
+
+const partialSchoolAdminDashboard = normalizeSchoolAdminDashboard({
+  school: { id: "school_1", name: "Demo School" },
+  metrics: { campuses: 2, students: null, parents: undefined },
+  studentsByClass: [{ label: "Grade 1", count: null }],
+  feeStatusSummary: [{ status: "PENDING", count: 3, amount: null }],
+  recentActivity: null
+});
+assert.equal(partialSchoolAdminDashboard.school?.name, "Demo School");
+assert.equal(partialSchoolAdminDashboard.metrics.campuses, 2);
+assert.equal(partialSchoolAdminDashboard.metrics.students, 0);
+assert.equal(partialSchoolAdminDashboard.metrics.parents, 0);
+assert.equal(partialSchoolAdminDashboard.studentsByClass[0].count, 0);
+assert.equal(partialSchoolAdminDashboard.feeStatusSummary[0].amount, 0);
+assert.deepEqual(partialSchoolAdminDashboard.recentActivity, []);

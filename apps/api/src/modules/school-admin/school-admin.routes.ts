@@ -69,20 +69,82 @@ router.get("/dashboard", async (req, res, next) => {
   try {
     const schoolId = requireSchool(req, res);
     if (!schoolId) return;
-    const [academicYears, classes, sections, subjects, teachers, students, fees, exams, attendance, library, timetable] = await Promise.all([
-      prisma.academicYear.count({ where: { schoolId } }),
+    const [
+      school,
+      campuses,
+      teachers,
+      students,
+      parents,
+      classes,
+      sections,
+      subjects,
+      admissions,
+      attendance,
+      libraryBooks,
+      fees,
+      exams,
+      timetable,
+      lmsProgress,
+      studentsByClass,
+      admissionsByStatus,
+      attendanceByStatus,
+      feeStatusSummary,
+      examStatusSummary,
+      libraryStatusSummary,
+      lmsProgressSummary,
+      recentActivity
+    ] = await Promise.all([
+      prisma.school.findFirst({ where: { id: schoolId, deletedAt: null }, select: { id: true, name: true, slug: true, status: true } }),
+      prisma.campus.count({ where: { schoolId } }),
+      prisma.teacherProfile.count({ where: { schoolId } }),
+      prisma.studentProfile.count({ where: { schoolId } }),
+      prisma.schoolMembership.count({ where: { schoolId, role: { code: "PARENT" }, status: "ACTIVE" } }),
       prisma.classLevel.count({ where: { schoolId } }),
       prisma.section.count({ where: { schoolId } }),
       prisma.subject.count({ where: { schoolId } }),
-      prisma.teacherProfile.count({ where: { schoolId } }),
-      prisma.studentProfile.count({ where: { schoolId } }),
-      prisma.feeRecord.count({ where: { schoolId } }),
-      prisma.examRecord.count({ where: { schoolId } }),
+      prisma.admissionApplication.count({ where: { schoolId } }),
       prisma.attendanceRecord.count({ where: { schoolId } }),
       prisma.libraryBook.count({ where: { schoolId } }),
-      prisma.timetableSlot.count({ where: { schoolId } })
+      prisma.feeRecord.count({ where: { schoolId } }),
+      prisma.examRecord.count({ where: { schoolId } }),
+      prisma.timetableSlot.count({ where: { schoolId } }),
+      prisma.lmsProgress.count({ where: { schoolId } }),
+      prisma.studentProfile.groupBy({ by: ["className"], where: { schoolId }, _count: { _all: true }, orderBy: { className: "asc" } }),
+      prisma.admissionApplication.groupBy({ by: ["status"], where: { schoolId }, _count: { _all: true }, orderBy: { status: "asc" } }),
+      prisma.attendanceRecord.groupBy({ by: ["status"], where: { schoolId }, _count: { _all: true }, orderBy: { status: "asc" } }),
+      prisma.feeRecord.groupBy({ by: ["status"], where: { schoolId }, _count: { _all: true }, _sum: { amount: true }, orderBy: { status: "asc" } }),
+      prisma.examRecord.groupBy({ by: ["status"], where: { schoolId }, _count: { _all: true }, orderBy: { status: "asc" } }),
+      prisma.libraryBook.groupBy({ by: ["status"], where: { schoolId }, _count: { _all: true }, orderBy: { status: "asc" } }),
+      prisma.lmsProgress.groupBy({ by: ["status"], where: { schoolId }, _count: { _all: true }, orderBy: { status: "asc" } }),
+      prisma.auditLog.findMany({
+        where: { schoolId },
+        include: { user: { select: { name: true, email: true } } },
+        orderBy: { createdAt: "desc" },
+        take: 8
+      })
     ]);
-    return ok(res, { academicYears, classes, sections, subjects, teachers, students, fees, exams, attendance, library, timetable });
+    if (!school) return fail(res, 404, "NOT_FOUND", "School not found.");
+    return ok(res, {
+      school,
+      metrics: { campuses, teachers, students, parents, classes, sections, subjects, admissions, attendance, libraryBooks, fees, exams, timetable, lmsProgress },
+      studentsByClass: studentsByClass.map((item) => ({ label: item.className, count: item._count._all })),
+      admissionsByStatus: admissionsByStatus.map((item) => ({ status: item.status, count: item._count._all })),
+      attendanceByStatus: attendanceByStatus.map((item) => ({ status: item.status, count: item._count._all })),
+      feeStatusSummary: feeStatusSummary.map((item) => ({ status: item.status, count: item._count._all, amount: item._sum.amount ?? 0 })),
+      examStatusSummary: examStatusSummary.map((item) => ({ status: item.status, count: item._count._all })),
+      libraryStatusSummary: libraryStatusSummary.map((item) => ({ status: item.status, count: item._count._all })),
+      lmsProgressSummary: lmsProgressSummary.map((item) => ({ status: item.status, count: item._count._all })),
+      recentActivity: recentActivity.map((item) => ({
+        id: item.id,
+        action: item.action,
+        resource: item.resource,
+        resourceId: item.resourceId,
+        actorName: item.user?.name ?? null,
+        actorEmail: item.user?.email ?? null,
+        createdAt: item.createdAt
+      })),
+      lastUpdatedAt: new Date().toISOString()
+    });
   } catch (error) {
     next(error);
   }

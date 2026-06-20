@@ -91,7 +91,9 @@ router.get("/dashboard", requirePermission(PERMISSIONS.SCHOOLS_READ), async (_re
       totalStaff,
       schoolsByStatus,
       usersByRole,
-      recentAdministratorActivity
+      recentAdministratorActivity,
+      recentSchools,
+      schoolsWithCampusCounts
     ] = await Promise.all([
       prisma.school.count(),
       prisma.school.count({ where: { deletedAt: null, status: "ACTIVE" } }),
@@ -111,6 +113,18 @@ router.get("/dashboard", requirePermission(PERMISSIONS.SCHOOLS_READ), async (_re
         include: { user: { select: { name: true, email: true } }, school: { select: { name: true } } },
         orderBy: { createdAt: "desc" },
         take: 8
+      }),
+      prisma.school.findMany({
+        where: { createdAt: { gte: monthsAgo(5) } },
+        select: { id: true, createdAt: true },
+        orderBy: { createdAt: "asc" },
+        take: 500
+      }),
+      prisma.school.findMany({
+        where: { deletedAt: null },
+        select: { id: true, name: true, _count: { select: { campuses: true } } },
+        orderBy: { name: "asc" },
+        take: 12
       })
     ]);
     const roleIds = usersByRole.map((item) => item.roleId);
@@ -132,6 +146,13 @@ router.get("/dashboard", requirePermission(PERMISSIONS.SCHOOLS_READ), async (_re
       },
       schoolsByStatus: schoolsByStatus.map((item) => ({ status: item.status, count: item._count._all })),
       usersByRole: usersByRole.map((item) => ({ role: roleNameById.get(item.roleId) ?? item.roleId, count: item._count._all })),
+      newSchoolsOverTime: bucketMonthlyCounts(recentSchools.map((school) => school.createdAt), 6),
+      campusesPerSchool: schoolsWithCampusCounts.map((school) => ({ schoolId: school.id, schoolName: school.name, count: school._count.campuses })),
+      administratorStatusSummary: [
+        { status: "ACTIVE", count: activeAdministrators },
+        { status: "SUSPENDED", count: suspendedAdministrators },
+        { status: "OTHER", count: Math.max(totalAdministrators - activeAdministrators - suspendedAdministrators, 0) }
+      ],
       recentAdministratorActivity: recentAdministratorActivity.map((item) => ({
         id: item.id,
         action: item.action,
@@ -850,6 +871,26 @@ router.post("/backups/:id/restore", requirePermission(PERMISSIONS.BACKUPS_MANAGE
   }
 });
 
+function bucketMonthlyCounts(dates: Date[], months: number) {
+  const now = new Date();
+  const buckets = Array.from({ length: months }, (_, index) => {
+    const date = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - (months - index - 1), 1));
+    const key = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+    return { key, label: date.toLocaleString("en", { month: "short", year: "numeric", timeZone: "UTC" }), count: 0 };
+  });
+  const byKey = new Map(buckets.map((bucket) => [bucket.key, bucket]));
+  for (const date of dates) {
+    const key = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+    const bucket = byKey.get(key);
+    if (bucket) bucket.count += 1;
+  }
+  return buckets;
+}
+
+function monthsAgo(count: number) {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - count, 1));
+}
 function normalizeCreateSchool<T extends { email?: string; website?: string }>(data: T) {
   return {
     ...data,

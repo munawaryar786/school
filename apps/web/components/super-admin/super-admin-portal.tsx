@@ -160,6 +160,9 @@ function DashboardSection({ refreshKey }: { refreshKey: number }) {
   const { metrics: dashboardMetrics } = dashboard;
   const schoolsByStatus = ensureArray(dashboard.schoolsByStatus);
   const usersByRole = ensureArray(dashboard.usersByRole);
+  const newSchoolsOverTime = ensureArray(dashboard.newSchoolsOverTime);
+  const campusesPerSchool = ensureArray(dashboard.campusesPerSchool);
+  const administratorStatusSummary = ensureArray(dashboard.administratorStatusSummary);
   const recentAdministratorActivity = ensureArray(dashboard.recentAdministratorActivity);
   const metrics = [
     ["Total schools", dashboardMetrics.totalSchools, "All school tenants including archived records", Building2],
@@ -199,6 +202,9 @@ function DashboardSection({ refreshKey }: { refreshKey: number }) {
       <div className="grid gap-4 xl:grid-cols-2">
         <ChartList title="Schools by status" rows={schoolsByStatus.map((item) => ({ label: item.status, value: item.count }))} summary={`Schools are currently distributed across ${formatNumber(schoolsByStatus.length)} status groups.`} />
         <ChartList title="Users by role" rows={usersByRole.map((item) => ({ label: item.role, value: item.count }))} summary={`User memberships are currently distributed across ${formatNumber(usersByRole.length)} role groups.`} />
+        <ChartList title="New schools over time" rows={newSchoolsOverTime.map((item) => ({ label: item.label, value: item.count }))} summary="New school records grouped from real created dates." />
+        <ChartList title="Campuses per school" rows={campusesPerSchool.map((item) => ({ label: item.schoolName, value: item.count }))} summary="Campus counts are grouped from active school records." />
+        <ChartList title="Administrator status" rows={administratorStatusSummary.map((item) => ({ label: item.status, value: item.count }))} summary="School administrator memberships grouped by status." />
       </div>
 
       <section className="rounded-lg border border-border bg-surface shadow-panel">
@@ -214,7 +220,7 @@ function DashboardSection({ refreshKey }: { refreshKey: number }) {
               <div key={item.id} className="flex flex-col gap-1 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <p className="font-medium">{item.action} {item.resource}</p>
-                  <p className="text-muted-foreground">{item.schoolName ?? "Platform"} · {item.actorName ?? item.actorEmail ?? "System"}</p>
+                  <p className="text-muted-foreground">{item.schoolName ?? "Platform"} - {item.actorName ?? item.actorEmail ?? "System"}</p>
                 </div>
                 <time className="text-xs text-muted-foreground">{formatDate(item.createdAt)}</time>
               </div>
@@ -976,3 +982,6 @@ function formatValue(value: unknown) {
 function formatDate(value: string) {
   return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
 }
+
+
+
