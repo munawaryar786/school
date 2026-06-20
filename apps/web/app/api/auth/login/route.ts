@@ -1,9 +1,25 @@
 import { NextResponse } from "next/server";
 import { loginSchema, type ApiResponse, type LoginResult } from "@school-erp/shared";
-import { backendUrl } from "../../../../lib/api-proxy";
+
+type LoginDiagnostic = { message: string };
 
 export async function POST(request: Request) {
-  const body = await request.json();
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json(
+      {
+        success: false,
+        error: {
+          code: "VALIDATION_ERROR",
+          message: "Please enter a valid email and password."
+        }
+      },
+      { status: 400 }
+    );
+  }
+
   const parsed = loginSchema.safeParse(body);
 
   if (!parsed.success) {
@@ -20,16 +36,45 @@ export async function POST(request: Request) {
     );
   }
 
-  const response = await fetch(backendUrl("/v1/auth/login"), {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(parsed.data),
-    cache: "no-store"
-  });
-  const payload = (await response.json()) as ApiResponse<LoginResult>;
+  const target = authLoginUrl();
+  if (!target) {
+    return diagnostic("API base URL is not configured", 500);
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(target, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(parsed.data),
+      cache: "no-store"
+    });
+  } catch {
+    return diagnostic("Authentication service is unreachable", 502);
+  }
+
+  const contentType = response.headers.get("content-type") ?? "";
+  if (!contentType.toLowerCase().includes("application/json")) {
+    return diagnostic("Authentication service returned an invalid response", 502);
+  }
+
+  let payload: ApiResponse<LoginResult>;
+  try {
+    payload = (await response.json()) as ApiResponse<LoginResult>;
+  } catch {
+    return diagnostic("Authentication service returned an invalid response", 502);
+  }
+
+  if (!isApiResponse(payload)) {
+    return diagnostic("Authentication service returned an invalid response", 502);
+  }
 
   if (!response.ok || !payload.success) {
     return NextResponse.json(payload, { status: response.status });
+  }
+
+  if (!isLoginResult(payload.data)) {
+    return diagnostic("Authentication service returned an invalid response", 502);
   }
 
   const result = NextResponse.json(payload);
@@ -70,4 +115,31 @@ export async function POST(request: Request) {
   }
 
   return result;
+}
+
+function authLoginUrl() {
+  const rawBase = process.env.NEXT_PUBLIC_API_URL?.trim();
+  if (!rawBase) return null;
+
+  try {
+    const url = new URL(rawBase);
+    const base = url.href.replace(/\/+$/, "");
+    return `${base}/v1/auth/login`;
+  } catch {
+    return null;
+  }
+}
+
+function diagnostic(message: LoginDiagnostic["message"], status: 500 | 502) {
+  return NextResponse.json({ message }, { status });
+}
+
+function isApiResponse(value: unknown): value is ApiResponse<LoginResult> {
+  return typeof value === "object" && value !== null && "success" in value;
+}
+
+function isLoginResult(value: unknown): value is LoginResult {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value as Partial<LoginResult>;
+  return typeof candidate.accessToken === "string" && typeof candidate.refreshToken === "string" && typeof candidate.user === "object" && candidate.user !== null;
 }

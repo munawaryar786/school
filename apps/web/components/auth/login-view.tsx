@@ -35,10 +35,10 @@ export function LoginView() {
         schoolId: values.schoolId || undefined
       })
     });
-    const payload = (await response.json()) as ApiResponse<LoginResult>;
+    const payload = await readLoginResponse(response);
 
-    if (!response.ok || !payload.success) {
-      setServerError(payload.success ? "Login failed." : payload.error.message);
+    if (!response.ok || !("success" in payload && payload.success)) {
+      setServerError(readLoginError(payload));
       return;
     }
 
@@ -144,4 +144,18 @@ export function LoginView() {
       </section>
     </main>
   );
+}
+
+async function readLoginResponse(response: Response): Promise<ApiResponse<LoginResult> | { message?: string }> {
+  try {
+    return (await response.json()) as ApiResponse<LoginResult> | { message?: string };
+  } catch {
+    return { message: "Authentication service returned an invalid response" };
+  }
+}
+
+function readLoginError(payload: ApiResponse<LoginResult> | { message?: string }) {
+  if ("success" in payload && !payload.success) return payload.error.message;
+  if ("message" in payload && typeof payload.message === "string" && payload.message.trim()) return payload.message;
+  return "Login failed.";
 }
