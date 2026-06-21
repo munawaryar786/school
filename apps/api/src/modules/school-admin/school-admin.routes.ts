@@ -41,6 +41,12 @@ const parentCreateSchema = z.object({
   isEmergencyContact: z.boolean().default(false)
 });
 
+const parentUpdateSchema = z.object({
+  name: z.string().trim().min(2).optional(),
+  email: z.string().trim().email().transform((value) => value.toLowerCase()).optional(),
+  loginEnabled: z.boolean().optional()
+});
+
 const parentLinkSchema = z.object({
   studentId: z.string().trim().min(1),
   relationType: relationTypeSchema.default("GUARDIAN"),
@@ -77,6 +83,7 @@ const schemas = {
 } as const;
 
 type Resource = keyof typeof schemas;
+const explicitCrudResources = ["academic-years", "classes", "sections", "subjects", "students", "teachers", "teacher-assignments"] as const satisfies readonly Resource[];
 
 const modelByResource: Record<Resource, keyof typeof prisma> = {
   "academic-years": "academicYear",
@@ -109,6 +116,12 @@ const columnsByResource: Record<Resource, string[]> = {
 };
 
 router.use(authenticate, requirePermission(PERMISSIONS.SCHOOL_OPERATIONS_MANAGE));
+
+for (const resource of explicitCrudResources) {
+  router.get(`/${resource}`, (req, res, next) => listSchoolResource(req, res, next, resource));
+  router.post(`/${resource}`, (req, res, next) => createSchoolResource(req, res, next, resource));
+  router.patch(`/${resource}/:id`, (req, res, next) => updateSchoolResource(req, res, next, resource));
+}
 
 router.get("/dashboard", async (req, res, next) => {
   try {
@@ -341,6 +354,51 @@ router.post("/parents", async (req, res, next) => {
   }
 });
 
+router.patch("/parents/:parentId", async (req, res, next) => {
+  try {
+    const schoolId = requireSchool(req, res);
+    if (!schoolId) return;
+    const parentId = routeParam(req, "parentId");
+    const data = parentUpdateSchema.parse(req.body);
+    const membership = await prisma.schoolMembership.findFirst({
+      where: { schoolId, userId: parentId, role: { code: "PARENT" } },
+      include: { user: true }
+    });
+    if (!membership) return fail(res, 404, "NOT_FOUND", "Parent account not found for this school.");
+    const user = await prisma.user.update({
+      where: { id: parentId },
+      data: {
+        ...(data.name ? { name: data.name } : {}),
+        ...(data.email ? { email: data.email } : {}),
+        ...(typeof data.loginEnabled === "boolean" ? { isActive: data.loginEnabled } : {})
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        isActive: true,
+        guardianStudentLinks: {
+          where: { schoolId },
+          include: { student: { select: { id: true, admissionNumber: true, name: true, className: true, status: true } } },
+          orderBy: { createdAt: "desc" }
+        }
+      }
+    });
+    if (typeof data.loginEnabled === "boolean") {
+      await prisma.$transaction([
+        prisma.schoolMembership.update({ where: { id: membership.id }, data: { status: data.loginEnabled ? "ACTIVE" : "SUSPENDED" } }),
+        prisma.guardianStudentLink.updateMany({ where: { schoolId, parentUserId: parentId }, data: { canLogin: data.loginEnabled } })
+      ]);
+    }
+    const updatedMembership = { ...membership, status: typeof data.loginEnabled === "boolean" ? (data.loginEnabled ? "ACTIVE" : "SUSPENDED") : membership.status, user };
+    await writeAudit(req, "UPDATE", "parents", parentId, data as Record<string, unknown>);
+    return ok(res, serializeParentMembership(updatedMembership));
+  } catch (error) {
+    if (isUniqueError(error)) return fail(res, 409, "CONFLICT", "A parent account with this email already exists.");
+    next(error);
+  }
+});
+
 router.post("/parents/:parentId/link-child", async (req, res, next) => {
   try {
     const schoolId = requireSchool(req, res);
@@ -386,11 +444,28 @@ router.patch("/parents/:parentId/login-status", async (req, res, next) => {
     next(error);
   }
 });
-router.get("/:resource", async (req, res, next) => {
+router.get("/:resource", (req, res, next) => {
+  const resource = parseResource(req, res);
+  if (!resource) return;
+  return listSchoolResource(req, res, next, resource);
+});
+
+router.post("/:resource", (req, res, next) => {
+  const resource = parseResource(req, res);
+  if (!resource) return;
+  return createSchoolResource(req, res, next, resource);
+});
+
+router.patch("/:resource/:id", (req, res, next) => {
+  const resource = parseResource(req, res);
+  if (!resource) return;
+  return updateSchoolResource(req, res, next, resource);
+});
+
+async function listSchoolResource(req: Request, res: Response, next: (error?: unknown) => void, resource: Resource) {
   try {
-    const resource = parseResource(req, res);
     const schoolId = requireSchool(req, res);
-    if (!resource || !schoolId) return;
+    if (!schoolId) return;
     const query = pageQuerySchema.parse(req.query);
     const delegate = prisma[modelByResource[resource]] as any;
     const where = buildWhere(resource, schoolId, query.search, query.status);
@@ -406,13 +481,12 @@ router.get("/:resource", async (req, res, next) => {
   } catch (error) {
     next(error);
   }
-});
+}
 
-router.post("/:resource", async (req, res, next) => {
+async function createSchoolResource(req: Request, res: Response, next: (error?: unknown) => void, resource: Resource) {
   try {
-    const resource = parseResource(req, res);
     const schoolId = requireSchool(req, res);
-    if (!resource || !schoolId) return;
+    if (!schoolId) return;
     const delegate = prisma[modelByResource[resource]] as any;
     const data = schemas[resource].parse(req.body);
     const guard = await validateSchoolReferences(resource, schoolId, data);
@@ -424,13 +498,12 @@ router.post("/:resource", async (req, res, next) => {
     if (isUniqueError(error)) return fail(res, 409, "CONFLICT", "A record with this unique value already exists.");
     next(error);
   }
-});
+}
 
-router.patch("/:resource/:id", async (req, res, next) => {
+async function updateSchoolResource(req: Request, res: Response, next: (error?: unknown) => void, resource: Resource) {
   try {
-    const resource = parseResource(req, res);
     const schoolId = requireSchool(req, res);
-    if (!resource || !schoolId) return;
+    if (!schoolId) return;
     const delegate = prisma[modelByResource[resource]] as any;
     const data = schemas[resource].partial().parse(req.body);
     await ensureOwnRecord(delegate, routeId(req), schoolId);
@@ -442,7 +515,7 @@ router.patch("/:resource/:id", async (req, res, next) => {
   } catch (error) {
     next(error);
   }
-});
+}
 
 router.delete("/:resource/:id", async (req, res, next) => {
   try {

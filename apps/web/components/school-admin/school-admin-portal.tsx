@@ -740,6 +740,7 @@ function ResourceTable({ config, rows, loading, error, onRetry, onEdit }: { conf
 }
 
 function TeacherAssignments({ refreshKey }: { refreshKey: number }) {
+  const [editing, setEditing] = useState<ResourceRow | null>(null);
   const config: ResourceConfig = {
     moduleId: "teachers",
     resource: "teacher-assignments",
@@ -780,8 +781,12 @@ function TeacherAssignments({ refreshKey }: { refreshKey: number }) {
 
   return (
     <section className="grid gap-4 xl:grid-cols-[380px_1fr]">
-      <ResourceForm config={dynamicConfig} editing={null} onCancel={() => undefined} onSaved={(row) => { setRows((current) => [row, ...current]); refresh(); }} />
-      <ResourceTable config={config} rows={rows} loading={loading} error={error} onRetry={refresh} onEdit={() => undefined} />
+      <ResourceForm config={dynamicConfig} editing={editing} onCancel={() => setEditing(null)} onSaved={(row) => {
+        setRows((current) => editing ? current.map((item) => item.id === row.id ? row : item) : [row, ...current]);
+        setEditing(null);
+        refresh();
+      }} />
+      <ResourceTable config={config} rows={rows} loading={loading} error={error} onRetry={refresh} onEdit={setEditing} />
     </section>
   );
 }
@@ -824,6 +829,7 @@ function ParentLinking({ rows, onChanged }: { rows: ResourceRow[]; onChanged: ()
         <p className="mt-1 text-sm text-muted-foreground">Links are validated by school scope before saving.</p>
       </div>
       {message ? <div className={`mt-4 rounded-md border p-3 text-sm ${message.tone === "success" ? "border-success/30 bg-success/10 text-success" : "border-error/30 bg-error/10 text-error"}`}>{message.text}</div> : null}
+      {students.length === 0 ? <StatePanel text="Create student profiles before linking parents." compact /> : null}
       <form className="mt-4 grid gap-3 lg:grid-cols-5" onSubmit={link}>
         <select className="min-h-10 rounded-md border border-border bg-background px-3 text-sm lg:col-span-2" required value={parentId} onChange={(event) => setParentId(event.target.value)}>
           <option value="">Select parent</option>
@@ -970,8 +976,25 @@ async function api(path: string, init?: RequestInit) {
   const response = await fetch(`/api/school-admin/${path}`, { headers: { "content-type": "application/json" }, ...init });
   const contentType = response.headers.get("content-type") ?? "";
   const payload = contentType.includes("application/json") ? await response.json() : await response.text();
-  if (!response.ok || payload.success === false) throw new Error(payload.error?.message ?? "Request failed.");
+  if (!response.ok || payload.success === false) throw new Error(friendlySchoolAdminError(path, payload.error?.message ?? "Request failed."));
   return payload;
+}
+
+function friendlySchoolAdminError(path: string, message: string) {
+  const lower = message.toLowerCase();
+  if (lower.includes("school admin resource not found")) {
+    if (path.startsWith("parents")) return "Parent management API is unavailable. Retry after deployment.";
+    return "The selected school resource could not be loaded.";
+  }
+  if (lower.includes("route not found")) {
+    if (path.includes("link-child")) return "This child could not be linked. Confirm the student and parent belong to this school.";
+    if (path.startsWith("parents")) return "Parent management API is unavailable. Retry after deployment.";
+    return "The selected school resource could not be loaded.";
+  }
+  if (path.includes("link-child") && (lower.includes("not found") || lower.includes("forbidden"))) {
+    return "This child could not be linked. Confirm the student and parent belong to this school.";
+  }
+  return message;
 }
 
 function formatDate(value: string) {
