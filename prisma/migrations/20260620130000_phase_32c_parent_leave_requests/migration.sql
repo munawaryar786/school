@@ -1,4 +1,4 @@
-﻿-- Phase 32C parent leave request foundation.
+-- Phase 32C parent leave request foundation.
 
 CREATE TYPE "LeaveRequestType" AS ENUM (
   'FULL_DAY',
