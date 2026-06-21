@@ -19,6 +19,14 @@ const pageQuerySchema = z.object({
   format: z.enum(["json", "csv"]).default("json")
 });
 
+
+const leaveReviewStatusSchema = z.enum(["UNDER_REVIEW", "APPROVED", "REJECTED", "CLARIFICATION_REQUESTED"]);
+const reviewableLeaveStatuses = ["SUBMITTED", "UNDER_REVIEW", "CLARIFICATION_REQUESTED"];
+
+const leaveReviewSchema = z.object({
+  status: leaveReviewStatusSchema,
+  reviewerComment: z.string().trim().max(1000).optional().nullable()
+});
 const schemas = {
   "academic-years": z.object({ name: z.string().min(2), startsOn: z.coerce.date(), endsOn: z.coerce.date(), status: z.string().default("ACTIVE") }),
   classes: z.object({ name: z.string().min(1), code: z.string().min(1), status: z.string().default("ACTIVE") }),
@@ -150,6 +158,62 @@ router.get("/dashboard", async (req, res, next) => {
   }
 });
 
+
+router.get("/leave-requests", async (req, res, next) => {
+  try {
+    const schoolId = requireSchool(req, res);
+    if (!schoolId) return;
+    const query = pageQuerySchema.parse(req.query);
+    const where: any = { schoolId };
+    if (query.status) where.status = query.status;
+    const [allRows, total] = await Promise.all([
+      (prisma as any).leaveRequest.findMany({
+        where,
+        include: leaveRequestInclude(),
+        orderBy: { createdAt: "desc" }
+      }),
+      (prisma as any).leaveRequest.count({ where })
+    ]);
+    const searchedRows = filterLeaveRequests(allRows, query.search);
+    const rows = searchedRows.slice((query.page - 1) * query.pageSize, query.page * query.pageSize);
+    return res.json({
+      success: true,
+      data: rows.map(serializeLeaveRequest),
+      pagination: { page: query.page, pageSize: query.pageSize, total: query.search ? searchedRows.length : total, totalPages: Math.ceil((query.search ? searchedRows.length : total) / query.pageSize) },
+      meta: { requestId: res.locals.requestId }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.patch("/leave-requests/:id/review", async (req, res, next) => {
+  try {
+    const schoolId = requireSchool(req, res);
+    if (!schoolId) return;
+    const data = leaveReviewSchema.parse(req.body);
+    const existing = await (prisma as any).leaveRequest.findFirst({ where: { id: routeId(req), schoolId } });
+    if (!existing) return fail(res, 404, "NOT_FOUND", "Leave request not found.");
+    if (!reviewableLeaveStatuses.includes(existing.status)) {
+      return fail(res, 400, "VALIDATION_ERROR", "This leave request can no longer be reviewed.");
+    }
+    const row = await (prisma as any).leaveRequest.update({
+      where: { id: existing.id },
+      data: {
+        status: data.status,
+        reviewerId: req.auth?.userId,
+        reviewerComment: data.reviewerComment || null,
+        reviewedAt: new Date(),
+        timeline: { create: { actorId: req.auth?.userId, action: data.status, note: data.reviewerComment || null } }
+      },
+      include: leaveRequestInclude()
+    });
+    await writeAudit(req, "UPDATE", "leave-requests", row.id, { status: data.status });
+    return ok(res, serializeLeaveRequest(row));
+  } catch (error) {
+    next(error);
+  }
+});
 router.get("/:resource", async (req, res, next) => {
   try {
     const resource = parseResource(req, res);
@@ -219,6 +283,63 @@ router.delete("/:resource/:id", async (req, res, next) => {
   }
 });
 
+
+function leaveRequestInclude() {
+  return {
+    student: { select: { id: true, admissionNumber: true, name: true, className: true } },
+    requestedBy: { select: { id: true, name: true, email: true } },
+    reviewer: { select: { id: true, name: true, email: true } },
+    timeline: { include: { actor: { select: { id: true, name: true, email: true } } }, orderBy: { createdAt: "asc" } }
+  };
+}
+
+function filterLeaveRequests(rows: any[], search: string | undefined) {
+  if (!search) return rows;
+  const needle = search.toLowerCase();
+  return rows.filter((row) => [
+    row.student?.name,
+    row.student?.admissionNumber,
+    row.student?.className,
+    row.requestedBy?.name,
+    row.requestedBy?.email,
+    row.type,
+    row.status,
+    row.reason
+  ].some((value) => String(value ?? "").toLowerCase().includes(needle)));
+}
+
+function serializeLeaveRequest(row: any) {
+  return {
+    id: row.id,
+    schoolId: row.schoolId,
+    studentId: row.studentId,
+    student: row.student ?? null,
+    requestedById: row.requestedById,
+    requestedBy: row.requestedBy ?? null,
+    type: row.type,
+    status: row.status,
+    startDate: row.startDate,
+    endDate: row.endDate,
+    startTime: row.startTime,
+    endTime: row.endTime,
+    reason: row.reason,
+    parentNote: row.parentNote,
+    reviewerId: row.reviewerId,
+    reviewer: row.reviewer ?? null,
+    reviewerComment: row.reviewerComment,
+    reviewedAt: row.reviewedAt,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    timeline: Array.isArray(row.timeline) ? row.timeline.map((event: any) => ({
+      id: event.id,
+      action: event.action,
+      note: event.note,
+      actorId: event.actorId,
+      actor: event.actor ?? null,
+      createdAt: event.createdAt
+    })) : []
+  };
+}
 function parseResource(req: Request, res: Response): Resource | null {
   const resource = req.params.resource as Resource;
   if (!resource || !(resource in schemas)) {

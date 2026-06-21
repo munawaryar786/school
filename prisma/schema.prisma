@@ -66,6 +66,26 @@ enum BackupStatus {
   RESTORED
 }
 
+enum LeaveRequestType {
+  FULL_DAY
+  MULTI_DAY
+  HALF_DAY
+  LATE_ARRIVAL
+  EARLY_PICKUP
+  MEDICAL_APPOINTMENT
+  EMERGENCY
+  FAMILY
+  OTHER
+}
+
+enum LeaveRequestStatus {
+  SUBMITTED
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+  CLARIFICATION_REQUESTED
+  CANCELLED
+}
 model User {
   id           String             @id @default(cuid())
   email        String             @unique
@@ -93,6 +113,9 @@ model User {
   studentFeePayments StudentFeePayment[]
   parentFeePayments ParentFeePayment[]
   parentPortalMessages ParentPortalMessage[]
+  leaveRequestsRequested LeaveRequest[] @relation("LeaveRequestRequestedBy")
+  leaveRequestsReviewed LeaveRequest[] @relation("LeaveRequestReviewedBy")
+  leaveRequestTimelineEvents LeaveRequestTimeline[] @relation("LeaveRequestTimelineActor")
 }
 
 model School {
@@ -138,6 +161,7 @@ model School {
   studentFeePayments StudentFeePayment[]
   parentFeePayments ParentFeePayment[]
   parentPortalMessages ParentPortalMessage[]
+  leaveRequests LeaveRequest[]
   admissionApplications AdmissionApplication[]
   admissionEnrollments AdmissionEnrollment[]
   admissionDocuments AdmissionDocument[]
@@ -650,11 +674,55 @@ model StudentProfile {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
   school          School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  leaveRequests   LeaveRequest[]
 
   @@unique([schoolId, admissionNumber])
   @@index([schoolId, status])
 }
 
+model LeaveRequest {
+  id              String             @id @default(cuid())
+  schoolId        String
+  studentId       String
+  requestedById   String
+  type            LeaveRequestType
+  status          LeaveRequestStatus @default(SUBMITTED)
+  startDate       DateTime
+  endDate         DateTime
+  startTime       String?
+  endTime         String?
+  reason          String
+  parentNote      String?
+  reviewerId      String?
+  reviewerComment String?
+  reviewedAt      DateTime?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+  school          School             @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  student         StudentProfile     @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  requestedBy     User               @relation("LeaveRequestRequestedBy", fields: [requestedById], references: [id], onDelete: Cascade)
+  reviewer        User?              @relation("LeaveRequestReviewedBy", fields: [reviewerId], references: [id], onDelete: SetNull)
+  timeline        LeaveRequestTimeline[]
+
+  @@index([schoolId, status])
+  @@index([schoolId, studentId])
+  @@index([schoolId, requestedById])
+  @@index([schoolId, startDate])
+}
+
+model LeaveRequestTimeline {
+  id             String       @id @default(cuid())
+  leaveRequestId String
+  actorId        String?
+  action         String
+  note           String?
+  createdAt      DateTime     @default(now())
+  leaveRequest   LeaveRequest @relation(fields: [leaveRequestId], references: [id], onDelete: Cascade)
+  actor          User?        @relation("LeaveRequestTimelineActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([leaveRequestId, createdAt])
+  @@index([actorId])
+}
 model FeeRecord {
   id        String   @id @default(cuid())
   schoolId  String

@@ -19,6 +19,33 @@ const pageQuerySchema = z.object({
   format: z.enum(["json", "csv"]).default("json")
 });
 
+const leaveRequestTypeSchema = z.enum([
+  "FULL_DAY",
+  "MULTI_DAY",
+  "HALF_DAY",
+  "LATE_ARRIVAL",
+  "EARLY_PICKUP",
+  "MEDICAL_APPOINTMENT",
+  "EMERGENCY",
+  "FAMILY",
+  "OTHER"
+]);
+
+const leaveRequestStatusValues = ["SUBMITTED", "UNDER_REVIEW", "APPROVED", "REJECTED", "CLARIFICATION_REQUESTED", "CANCELLED"] as const;
+
+const createLeaveRequestSchema = z.object({
+  type: leaveRequestTypeSchema,
+  startDate: z.coerce.date(),
+  endDate: z.coerce.date(),
+  startTime: z.string().trim().max(20).optional().nullable(),
+  endTime: z.string().trim().max(20).optional().nullable(),
+  reason: z.string().trim().min(3).max(1000),
+  parentNote: z.string().trim().max(1000).optional().nullable()
+}).refine((value) => value.endDate >= value.startDate, {
+  message: "End date must be on or after the start date.",
+  path: ["endDate"]
+});
+
 const createSchemas = {
   payments: z.object({
     studentName: z.string().min(2),
@@ -60,14 +87,15 @@ router.get("/dashboard", async (req, res, next) => {
   try {
     const scope = await requireParentScope(req, res);
     if (!scope) return;
-    const [attendance, results, homework, fees, payments, inboundMessages, outboundMessages] = await Promise.all([
+    const [attendance, results, homework, fees, payments, inboundMessages, outboundMessages, leaveRequests] = await Promise.all([
       prisma.teacherAttendance.count({ where: whereFor("attendance", scope) }),
       prisma.teacherMark.count({ where: whereFor("results", scope) }),
       prisma.teacherAssignment.count({ where: whereFor("homework", scope) }),
       prisma.feeRecord.count({ where: whereFor("fees", scope) }),
       prisma.parentFeePayment.count({ where: whereFor("payments", scope) }),
       prisma.parentCommunication.count({ where: inboundCommunicationWhere(scope) }),
-      prisma.parentPortalMessage.count({ where: whereFor("communication", scope) })
+      prisma.parentPortalMessage.count({ where: whereFor("communication", scope) }),
+      (prisma as any).leaveRequest.count({ where: { schoolId: scope.schoolId, requestedById: scope.parentId } })
     ]);
     const performance = await buildPerformance(scope);
     return ok(res, {
@@ -79,9 +107,107 @@ router.get("/dashboard", async (req, res, next) => {
       fees,
       payments,
       communication: inboundMessages + outboundMessages,
-      childProfiles: scope.children,
+      leaveRequests,
+      childProfiles: scope.children.map(serializeChild),
       performanceSummary: performance
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/children", async (req, res, next) => {
+  try {
+    const scope = await requireParentScope(req, res);
+    if (!scope) return;
+    return ok(res, scope.children.map(serializeChild));
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/children/:studentId/summary", async (req, res, next) => {
+  try {
+    const scope = await requireParentScope(req, res);
+    if (!scope) return;
+    const child = ensureLinkedChild(req, res, scope);
+    if (!child) return;
+    const [attendance, results, homework, pendingFees, paidPayments, inboundMessages, outboundMessages, leaveRequests] = await Promise.all([
+      prisma.teacherAttendance.findMany({ where: { schoolId: scope.schoolId, studentName: child.name } }),
+      prisma.teacherMark.findMany({ where: { schoolId: scope.schoolId, studentName: child.name } }),
+      prisma.teacherAssignment.count({ where: { schoolId: scope.schoolId, className: child.className, status: "PUBLISHED" } }),
+      prisma.feeRecord.count({ where: { schoolId: scope.schoolId, status: { in: ["PENDING", "OVERDUE"] } } }),
+      prisma.parentFeePayment.count({ where: { schoolId: scope.schoolId, parentId: scope.parentId, studentName: child.name, status: "PAID" } }),
+      prisma.parentCommunication.count({ where: { schoolId: scope.schoolId, guardianName: scope.parentName, studentName: child.name } }),
+      prisma.parentPortalMessage.count({ where: { schoolId: scope.schoolId, parentId: scope.parentId, studentName: child.name } }),
+      (prisma as any).leaveRequest.findMany({ where: { schoolId: scope.schoolId, studentId: child.id, requestedById: scope.parentId }, orderBy: { createdAt: "desc" } })
+    ]);
+    const present = attendance.filter((row) => row.status === "PRESENT").length;
+    const attendanceRate = attendance.length === 0 ? null : Math.round((present / attendance.length) * 100);
+    const scored = results.filter((row) => row.maxMarks > 0);
+    const averageScore = scored.length === 0 ? null : Math.round(scored.reduce((sum, row) => sum + (row.marksObtained / row.maxMarks) * 100, 0) / scored.length);
+    return ok(res, {
+      child: serializeChild(child),
+      attendance: { total: attendance.length, present, attendanceRate },
+      results: { total: results.length, averageScore },
+      homework: { open: homework },
+      fees: { pending: pendingFees, paidPayments },
+      messages: { total: inboundMessages + outboundMessages },
+      leaveRequests: {
+        total: leaveRequests.length,
+        pending: leaveRequests.filter((row: any) => ["SUBMITTED", "UNDER_REVIEW", "CLARIFICATION_REQUESTED"].includes(row.status)).length,
+        latest: leaveRequests[0] ? serializeLeaveRequest(leaveRequests[0]) : null,
+        byStatus: leaveRequestStatusValues.map((status) => ({ status, count: leaveRequests.filter((row: any) => row.status === status).length }))
+      },
+      library: { available: false, message: "Library reading data is not configured yet." }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/children/:studentId/leave-requests", async (req, res, next) => {
+  try {
+    const scope = await requireParentScope(req, res);
+    if (!scope) return;
+    const child = ensureLinkedChild(req, res, scope);
+    if (!child) return;
+    const rows = await (prisma as any).leaveRequest.findMany({
+      where: { schoolId: scope.schoolId, studentId: child.id, requestedById: scope.parentId },
+      include: leaveRequestInclude(),
+      orderBy: { createdAt: "desc" }
+    });
+    return ok(res, rows.map(serializeLeaveRequest));
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/children/:studentId/leave-requests", async (req, res, next) => {
+  try {
+    const scope = await requireParentScope(req, res);
+    if (!scope) return;
+    const child = ensureLinkedChild(req, res, scope);
+    if (!child) return;
+    const data = createLeaveRequestSchema.parse(req.body);
+    const row = await (prisma as any).leaveRequest.create({
+      data: {
+        schoolId: scope.schoolId,
+        studentId: child.id,
+        requestedById: scope.parentId,
+        type: data.type,
+        startDate: data.startDate,
+        endDate: data.endDate,
+        startTime: data.startTime || null,
+        endTime: data.endTime || null,
+        reason: data.reason,
+        parentNote: data.parentNote || null,
+        timeline: { create: { actorId: scope.parentId, action: "SUBMITTED", note: data.parentNote || null } }
+      },
+      include: leaveRequestInclude()
+    });
+    await writeAudit(req, "CREATE", "leave-requests", row.id, { studentId: child.id, type: data.type });
+    return ok(res, serializeLeaveRequest(row), 201);
   } catch (error) {
     next(error);
   }
@@ -179,6 +305,72 @@ async function requireParentScope(req: Request, res: Response) {
     children,
     childNames: children.map((child) => child.name),
     classNames: [...new Set(children.map((child) => child.className))]
+  };
+}
+
+function ensureLinkedChild(req: Request, res: Response, scope: ParentScope) {
+  const studentId = routeParam(req, "studentId");
+  const child = scope.children.find((item) => item.id === studentId);
+  if (!child) {
+    fail(res, 403, "FORBIDDEN", "This child is not linked to the parent account.");
+    return null;
+  }
+  return child;
+}
+
+function serializeChild(child: ParentScope["children"][number]) {
+  return {
+    id: child.id,
+    admissionNumber: child.admissionNumber,
+    name: child.name,
+    guardianName: child.guardianName,
+    guardianPhone: child.guardianPhone,
+    className: child.className,
+    status: child.status,
+    createdAt: child.createdAt,
+    updatedAt: child.updatedAt
+  };
+}
+
+function leaveRequestInclude() {
+  return {
+    student: { select: { id: true, admissionNumber: true, name: true, className: true } },
+    requestedBy: { select: { id: true, name: true, email: true } },
+    reviewer: { select: { id: true, name: true, email: true } },
+    timeline: { include: { actor: { select: { id: true, name: true, email: true } } }, orderBy: { createdAt: "asc" } }
+  };
+}
+
+function serializeLeaveRequest(row: any) {
+  return {
+    id: row.id,
+    schoolId: row.schoolId,
+    studentId: row.studentId,
+    student: row.student ?? null,
+    requestedById: row.requestedById,
+    requestedBy: row.requestedBy ?? null,
+    type: row.type,
+    status: row.status,
+    startDate: row.startDate,
+    endDate: row.endDate,
+    startTime: row.startTime,
+    endTime: row.endTime,
+    reason: row.reason,
+    parentNote: row.parentNote,
+    reviewerId: row.reviewerId,
+    reviewer: row.reviewer ?? null,
+    reviewerComment: row.reviewerComment,
+    reviewedAt: row.reviewedAt,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    timeline: Array.isArray(row.timeline) ? row.timeline.map((event: any) => ({
+      id: event.id,
+      action: event.action,
+      note: event.note,
+      actorId: event.actorId,
+      actor: event.actor ?? null,
+      createdAt: event.createdAt
+    })) : []
   };
 }
 
@@ -316,6 +508,11 @@ function escapeCsv(value: unknown) {
 
 function routeId(req: Request) {
   return Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+}
+
+function routeParam(req: Request, key: string) {
+  const value = req.params[key];
+  return Array.isArray(value) ? value[0] : value;
 }
 
 function isPrismaError(error: unknown) {

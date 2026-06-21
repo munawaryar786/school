@@ -6,6 +6,7 @@ import {
   BookOpen,
   CalendarCheck,
   CalendarDays,
+  Clock3,
   CheckCircle2,
   ClipboardList,
   GraduationCap,
@@ -46,6 +47,20 @@ type ModuleId =
   | "settings";
 
 type ApiOne<T> = { success: true; data: T };
+type ApiList<T> = { success: true; data: T[] };
+type LeaveRequest = {
+  id: string;
+  type: string;
+  status: string;
+  startDate: string;
+  endDate: string;
+  reason: string;
+  parentNote?: string | null;
+  reviewerComment?: string | null;
+  createdAt: string;
+  student?: { name?: string | null; admissionNumber?: string | null; className?: string | null } | null;
+  requestedBy?: { name?: string | null; email?: string | null } | null;
+};
 type IconType = React.ComponentType<{ size?: number; "aria-hidden"?: boolean; className?: string }>;
 type ModuleStatus = "Ready" | "Setup Required" | "Preview" | "Locked" | "Coming Later";
 
@@ -233,6 +248,85 @@ function Dashboard({ refreshKey }: { refreshKey: number }) {
   );
 }
 
+function LeaveRequestReviewQueue() {
+  const [requests, setRequests] = useState<LeaveRequest[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
+  const [comments, setComments] = useState<Record<string, string>>({});
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  useEffect(() => {
+    setLoading(true);
+    setError(null);
+    api("leave-requests?pageSize=6")
+      .then((payload: ApiList<LeaveRequest>) => setRequests(Array.isArray(payload.data) ? payload.data : []))
+      .catch((caught) => setError(caught instanceof Error ? caught.message : "Leave request queue could not load."))
+      .finally(() => setLoading(false));
+  }, [refreshKey]);
+
+  async function review(id: string, status: "APPROVED" | "REJECTED" | "UNDER_REVIEW" | "CLARIFICATION_REQUESTED") {
+    setMessage(null);
+    try {
+      await api(`leave-requests/${id}/review`, {
+        method: "PATCH",
+        body: JSON.stringify({ status, reviewerComment: comments[id] || null })
+      });
+      setComments((current) => ({ ...current, [id]: "" }));
+      setMessage({ tone: "success", text: "Leave request updated." });
+      setRefreshKey((value) => value + 1);
+    } catch (caught) {
+      setMessage({ tone: "error", text: caught instanceof Error ? caught.message : "Leave request could not be updated." });
+    }
+  }
+
+  return (
+    <section className="rounded-lg border border-border bg-surface p-4 shadow-panel">
+      <div className="flex flex-col gap-2 border-b border-border pb-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="text-base font-semibold">Parent leave request queue</h2>
+          <p className="mt-1 text-sm text-muted-foreground">School-scoped parent leave and half-day requests awaiting review.</p>
+        </div>
+        <button className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-border bg-background px-3 text-sm font-medium" onClick={() => setRefreshKey((value) => value + 1)} type="button">
+          <RefreshCw aria-hidden={true} size={15} />
+          Refresh
+        </button>
+      </div>
+      {message ? <div className={`mt-4 rounded-md border p-3 text-sm ${message.tone === "success" ? "border-success/30 bg-success/10 text-success" : "border-error/30 bg-error/10 text-error"}`}>{message.text}</div> : null}
+      {loading ? <StatePanel text="Loading leave requests" compact /> : error ? <StatePanel text={error} tone="error" compact onRetry={() => setRefreshKey((value) => value + 1)} /> : requests.length === 0 ? <StatePanel text="No parent leave requests are waiting for review." compact /> : (
+        <div className="mt-4 space-y-3">
+          {requests.map((request) => (
+            <article key={request.id} className="rounded-md border border-border bg-background p-3">
+              <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <Clock3 aria-hidden={true} className="text-primary" size={16} />
+                    <p className="font-semibold">{request.student?.name ?? "Student"} - {humanize(request.type)}</p>
+                  </div>
+                  <p className="mt-1 text-sm text-muted-foreground">{request.student?.className ?? "Class not available"} | {request.requestedBy?.name ?? request.requestedBy?.email ?? "Parent"}</p>
+                  <p className="mt-1 text-sm text-muted-foreground">{formatDate(request.startDate)} to {formatDate(request.endDate)}</p>
+                </div>
+                <LeaveStatusBadge status={request.status} />
+              </div>
+              <p className="mt-3 text-sm leading-6">{request.reason}</p>
+              {request.parentNote ? <p className="mt-2 rounded-md border border-border bg-surface p-2 text-sm text-muted-foreground">Parent note: {request.parentNote}</p> : null}
+              <label className="mt-3 grid gap-1 text-sm font-medium">
+                Review comment
+                <textarea className="min-h-16 rounded-md border border-border bg-surface px-3 py-2 text-sm" value={comments[request.id] ?? ""} onChange={(event) => setComments((current) => ({ ...current, [request.id]: event.target.value }))} />
+              </label>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button className="inline-flex min-h-9 items-center justify-center gap-2 rounded-md border border-success/30 bg-success/10 px-3 text-sm font-medium text-success" onClick={() => review(request.id, "APPROVED")} type="button"><CheckCircle2 aria-hidden={true} size={15} />Approve</button>
+                <button className="inline-flex min-h-9 items-center justify-center rounded-md border border-error/30 bg-error/10 px-3 text-sm font-medium text-error" onClick={() => review(request.id, "REJECTED")} type="button">Reject</button>
+                <button className="inline-flex min-h-9 items-center justify-center rounded-md border border-border bg-surface px-3 text-sm font-medium" onClick={() => review(request.id, "CLARIFICATION_REQUESTED")} type="button">Ask clarification</button>
+                <button className="inline-flex min-h-9 items-center justify-center rounded-md border border-border bg-surface px-3 text-sm font-medium" onClick={() => review(request.id, "UNDER_REVIEW")} type="button">Mark under review</button>
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
 function SetupCoach({ dashboard }: { dashboard: ReturnType<typeof normalizeSchoolAdminDashboard> }) {
   const steps = [
     ["Create academic year", dashboard.metrics.classes + dashboard.metrics.sections + dashboard.metrics.subjects > 0],
@@ -361,6 +455,15 @@ function ModuleStatusCard({ module, dashboard }: { module: ModuleConfig; dashboa
   );
 }
 
+
+function LeaveStatusBadge({ status }: { status: string }) {
+  const className = status === "APPROVED"
+    ? "border-success/25 bg-success/10 text-success"
+    : status === "REJECTED"
+      ? "border-error/25 bg-error/10 text-error"
+      : "border-warning/30 bg-warning/10 text-warning";
+  return <span className={`inline-flex rounded-md border px-2 py-1 text-xs font-medium ${className}`}>{humanize(status)}</span>;
+}
 function StatusBadge({ status }: { status: ModuleStatus }) {
   const className = status === "Ready"
     ? "border-success/25 bg-success/10 text-success"
@@ -422,8 +525,8 @@ function useDashboard(refreshKey: number) {
   return { data, loading, error, retry: () => setRetryKey((value) => value + 1) };
 }
 
-async function api(path: string) {
-  const response = await fetch(`/api/school-admin/${path}`, { headers: { "content-type": "application/json" } });
+async function api(path: string, init?: RequestInit) {
+  const response = await fetch(`/api/school-admin/${path}`, { headers: { "content-type": "application/json" }, ...init });
   const contentType = response.headers.get("content-type") ?? "";
   const payload = contentType.includes("application/json") ? await response.json() : await response.text();
   if (!response.ok || payload.success === false) throw new Error(payload.error?.message ?? "Request failed.");
@@ -433,4 +536,8 @@ async function api(path: string) {
 function formatDate(value: string) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? "Not available" : new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(date);
+}
+
+function humanize(value: string) {
+  return value.replaceAll("_", " ").toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
