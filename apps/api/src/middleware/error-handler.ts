@@ -8,6 +8,11 @@ export function errorHandler(error: unknown, _req: Request, res: Response, _next
     return fail(res, 400, "VALIDATION_ERROR", "Validation failed.", error.flatten());
   }
 
+  if (error instanceof Error && typeof (error as any).statusCode === "number") {
+    const status = (error as any).statusCode;
+    return fail(res, status, status === 404 ? "NOT_FOUND" : status === 403 ? "FORBIDDEN" : "VALIDATION_ERROR", error.message);
+  }
+
   console.error(error);
   void prisma.errorMonitoringEvent.create({
     data: {

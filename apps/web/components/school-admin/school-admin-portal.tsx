@@ -49,6 +49,14 @@ type ModuleId =
 
 type ApiOne<T> = { success: true; data: T };
 type ApiList<T> = { success: true; data: T[]; pagination?: { total: number; page: number; pageSize: number; totalPages: number } };
+type ReadinessStatus = "READY" | "SETUP_REQUIRED" | "DEPENDENCY_REQUIRED" | "COMING_LATER";
+type ReadinessModule = { id: string; label: string; status: ReadinessStatus; ready: boolean; nextAction: string; missingDependencies: string[] };
+type ReadinessData = {
+  counts: Record<string, number>;
+  flags: Record<string, boolean>;
+  modules: Record<string, ReadinessModule>;
+  nextActions: Array<{ module: string; action: string; missingDependencies: string[] }>;
+};
 type LeaveRequest = {
   id: string;
   type: string;
@@ -247,7 +255,9 @@ const resourceConfigs: Record<Exclude<ModuleId, "dashboard" | "admissions" | "at
 export function SchoolAdminPortal() {
   const [activeModule, setActiveModule] = useState<ModuleId>("dashboard");
   const [refreshKey, setRefreshKey] = useState(0);
+  const readiness = useReadiness(refreshKey);
   const active = modules.find((item) => item.id === activeModule) ?? modules[0];
+  const refreshAll = () => setRefreshKey((value) => value + 1);
 
   return (
     <div className="theme-school-admin grid gap-5 xl:grid-cols-[260px_1fr]">
@@ -284,19 +294,19 @@ export function SchoolAdminPortal() {
               Real school-scoped metrics, setup guidance, analytics, and safe module entry points for the assigned school.
             </p>
           </div>
-          <button className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-border bg-surface px-4 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary" onClick={() => setRefreshKey((value) => value + 1)} type="button">
+          <button className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-border bg-surface px-4 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary" onClick={refreshAll} type="button">
             <RefreshCw aria-hidden={true} size={16} />
             Refresh
           </button>
         </header>
 
-        {activeModule === "dashboard" ? <Dashboard refreshKey={refreshKey} /> : openedModules.has(activeModule) ? <CorePeopleWorkspace moduleId={activeModule} refreshKey={refreshKey} /> : <ModulePreview module={active} />}
+        {activeModule === "dashboard" ? <Dashboard refreshKey={refreshKey} readiness={readiness} onOpenModule={setActiveModule} /> : openedModules.has(activeModule) ? <CorePeopleWorkspace moduleId={activeModule} refreshKey={refreshKey} onChanged={refreshAll} /> : <ModulePreview module={active} readiness={readiness.data} />}
       </main>
     </div>
   );
 }
 
-function Dashboard({ refreshKey }: { refreshKey: number }) {
+function Dashboard({ refreshKey, readiness, onOpenModule }: { refreshKey: number; readiness: ReturnType<typeof useReadiness>; onOpenModule: (moduleId: ModuleId) => void }) {
   const { data, loading, error, retry } = useDashboard(refreshKey);
   if (loading) return <StatePanel text="Loading school dashboard" />;
   if (error) return <StatePanel text={error} tone="error" onRetry={retry} />;
@@ -339,8 +349,8 @@ function Dashboard({ refreshKey }: { refreshKey: number }) {
       </section>
 
       <section className="grid gap-4 xl:grid-cols-[1fr_1fr]">
-        <SetupCoach dashboard={dashboard} />
-        <ActionQueue dashboard={dashboard} />
+        <SetupCoach dashboard={dashboard} readiness={readiness.data} />
+        <ActionQueue dashboard={dashboard} readiness={readiness.data} loading={readiness.loading} error={readiness.error} onRetry={readiness.retry} />
       </section>
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -365,7 +375,7 @@ function Dashboard({ refreshKey }: { refreshKey: number }) {
         </div>
         <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {modules.filter((item) => item.id !== "dashboard").map((item) => (
-            <ModuleStatusCard key={item.id} module={item} dashboard={dashboard} />
+            <ModuleStatusCard key={item.id} module={item} dashboard={dashboard} readiness={readiness.data} onOpenModule={onOpenModule} />
           ))}
         </div>
       </section>
@@ -474,20 +484,19 @@ function LeaveRequestReviewQueue() {
     </section>
   );
 }
-function SetupCoach({ dashboard }: { dashboard: ReturnType<typeof normalizeSchoolAdminDashboard> }) {
+function SetupCoach({ dashboard, readiness }: { dashboard: ReturnType<typeof normalizeSchoolAdminDashboard>; readiness: ReadinessData | null }) {
+  const flags = readiness?.flags;
   const steps = [
-    ["Create academic year", dashboard.metrics.classes + dashboard.metrics.sections + dashboard.metrics.subjects > 0],
-    ["Add classes", dashboard.metrics.classes > 0],
-    ["Add sections", dashboard.metrics.sections > 0],
-    ["Add subjects", dashboard.metrics.subjects > 0],
-    ["Add teachers", dashboard.metrics.teachers > 0],
-    ["Assign teachers", dashboard.metrics.teachers > 0 && dashboard.metrics.subjects > 0],
-    ["Add students", dashboard.metrics.students > 0],
-    ["Link parents/guardians", dashboard.metrics.parents > 0],
-    ["Create fee structure", dashboard.metrics.fees > 0],
-    ["Add library books", dashboard.metrics.libraryBooks > 0],
-    ["Create notices", dashboard.recentActivity.some((item) => item.resource.toLowerCase().includes("notice"))],
-    ["Prepare exams/timetable later", dashboard.metrics.exams > 0 || dashboard.metrics.timetable > 0]
+    ["Create active academic year", flags?.hasActiveAcademicYear ?? dashboard.metrics.classes + dashboard.metrics.sections + dashboard.metrics.subjects > 0],
+    ["Add classes", flags?.hasClass ?? dashboard.metrics.classes > 0],
+    ["Add sections", flags?.hasSection ?? dashboard.metrics.sections > 0],
+    ["Add subjects", flags?.hasSubject ?? dashboard.metrics.subjects > 0],
+    ["Add teachers", flags?.hasTeacher ?? dashboard.metrics.teachers > 0],
+    ["Assign teachers", flags?.hasTeacherAssignment ?? false],
+    ["Add students", flags?.hasStudent ?? dashboard.metrics.students > 0],
+    ["Create parents/guardians", flags?.hasParentGuardian ?? dashboard.metrics.parents > 0],
+    ["Link parents/guardians", flags?.hasParentChildLink ?? false],
+    ["Keep locked modules dependency-gated", true]
   ] as const;
   const complete = steps.filter(([, done]) => done).length;
 
@@ -512,8 +521,11 @@ function SetupCoach({ dashboard }: { dashboard: ReturnType<typeof normalizeSchoo
   );
 }
 
-function ActionQueue({ dashboard }: { dashboard: ReturnType<typeof normalizeSchoolAdminDashboard> }) {
-  const actions = [
+function ActionQueue({ dashboard, readiness, loading, error, onRetry }: { dashboard: ReturnType<typeof normalizeSchoolAdminDashboard>; readiness: ReadinessData | null; loading: boolean; error: string | null; onRetry: () => void }) {
+  if (loading) return <section className="rounded-lg border border-border bg-surface p-4 shadow-panel"><StatePanel text="Loading setup readiness" compact /></section>;
+  if (error) return <section className="rounded-lg border border-border bg-surface p-4 shadow-panel"><StatePanel text={error} tone="error" compact onRetry={onRetry} /></section>;
+  const readinessActions = readiness?.nextActions?.slice(0, 6).map((item) => `${item.module}: ${item.action}${item.missingDependencies.length ? ` Missing: ${item.missingDependencies.join(", ")}.` : ""}`) ?? [];
+  const actions = readinessActions.length ? readinessActions : [
     dashboard.metrics.classes === 0 ? "Create classes before sections, subjects, timetable, and attendance." : null,
     dashboard.metrics.sections === 0 ? "Create sections after classes so students can be grouped correctly." : null,
     dashboard.metrics.subjects === 0 ? "Create subjects/courses before teacher assignment and LMS setup." : null,
@@ -554,15 +566,17 @@ function MetricCard({ label, value, detail, Icon }: { label: string; value: numb
   );
 }
 
-function ModulePreview({ module }: { module: ModuleConfig }) {
+function ModulePreview({ module, readiness }: { module: ModuleConfig; readiness: ReadinessData | null }) {
   const Icon = module.icon;
-  const dependencyText = lockedDependencyText[module.id] ?? module.requirements;
+  const moduleReadiness = readiness?.modules[module.id];
+  const dependencyText = moduleReadiness?.missingDependencies.length ? `Missing: ${moduleReadiness.missingDependencies.join(", ")}` : lockedDependencyText[module.id] ?? module.requirements;
+  const status = moduleReadiness ? readinessStatusToModuleStatus(moduleReadiness.status) : module.status;
   return (
     <section className="rounded-lg border border-border bg-surface p-6 shadow-panel">
       <div className="flex max-w-4xl items-start gap-4">
         <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary"><Icon aria-hidden={true} size={20} /></span>
         <div className="min-w-0">
-          <StatusBadge status={module.status} />
+          <StatusBadge status={status} />
           <h2 className="mt-3 text-xl font-semibold">{module.label}</h2>
           <p className="mt-2 text-sm leading-6 text-muted-foreground">{module.purpose}</p>
           <div className="mt-4 grid gap-3 md:grid-cols-2">
@@ -572,7 +586,7 @@ function ModulePreview({ module }: { module: ModuleConfig }) {
             </div>
             <div className="rounded-md border border-border bg-background p-3">
               <p className="text-xs font-medium uppercase text-muted-foreground">Next safe action</p>
-              <p className="mt-1 text-sm leading-5">{module.nextAction}</p>
+              <p className="mt-1 text-sm leading-5">{moduleReadiness?.nextAction ?? module.nextAction}</p>
             </div>
           </div>
           <button className="mt-5 inline-flex min-h-10 items-center justify-center rounded-md border border-border bg-muted px-4 text-sm font-medium text-muted-foreground" type="button" disabled>
@@ -584,7 +598,7 @@ function ModulePreview({ module }: { module: ModuleConfig }) {
   );
 }
 
-function CorePeopleWorkspace({ moduleId, refreshKey }: { moduleId: ModuleId; refreshKey: number }) {
+function CorePeopleWorkspace({ moduleId, refreshKey, onChanged }: { moduleId: ModuleId; refreshKey: number; onChanged: () => void }) {
   const config = resourceConfigs[moduleId as keyof typeof resourceConfigs];
   const [editing, setEditing] = useState<ResourceRow | null>(null);
   const { rows, loading, error, refresh, setRows } = useResourceList(config.resource, refreshKey);
@@ -609,13 +623,14 @@ function CorePeopleWorkspace({ moduleId, refreshKey }: { moduleId: ModuleId; ref
         <ResourceForm config={config} editing={editing} onCancel={() => setEditing(null)} onSaved={(row) => {
           setRows((current) => editing ? current.map((item) => item.id === row.id ? row : item) : [row, ...current]);
           setEditing(null);
+          onChanged();
           refresh();
         }} />
         <ResourceTable config={config} rows={rows} loading={loading} error={error} onRetry={refresh} onEdit={setEditing} />
       </section>
 
-      {moduleId === "teachers" ? <TeacherAssignments refreshKey={refreshKey} /> : null}
-      {moduleId === "parents" ? <ParentLinking rows={rows} onChanged={refresh} /> : null}
+      {moduleId === "teachers" ? <TeacherAssignments refreshKey={refreshKey} onChanged={onChanged} /> : null}
+      {moduleId === "parents" ? <ParentLinking rows={rows} onChanged={() => { refresh(); onChanged(); }} /> : null}
     </div>
   );
 }
@@ -624,7 +639,7 @@ function ResourceForm({ config, editing, onCancel, onSaved }: { config: Resource
   const [form, setForm] = useState<Record<string, any>>({});
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
-  const { rows: classes } = useResourceList("classes", 0, config.resource === "sections");
+  const { rows: classes } = useResourceList("classes", 0, config.resource === "sections" || config.resource === "students");
   const { rows: students } = useResourceList("students", 0, config.resource === "parents");
 
   useEffect(() => {
@@ -673,8 +688,8 @@ function ResourceForm({ config, editing, onCancel, onSaved }: { config: Resource
       {message ? <div className={`mt-4 rounded-md border p-3 text-sm ${message.tone === "success" ? "border-success/30 bg-success/10 text-success" : "border-error/30 bg-error/10 text-error"}`}>{message.text}</div> : null}
       <div className="mt-4 grid gap-3">
         {config.fields.map((field) => {
-          const dynamicOptions = field.name === "classId" ? classes.map((row) => ({ value: row.id, label: row.name ?? row.code ?? row.id })) : field.name === "studentId" ? [{ value: "", label: "No child yet" }, ...students.map((row) => ({ value: row.id, label: `${row.name} (${row.admissionNumber ?? "No admission #"} )` }))] : field.options;
-          return <FieldControl key={field.name} field={{ ...field, options: dynamicOptions }} value={form[field.name]} onChange={(value) => setForm((current) => ({ ...current, [field.name]: value }))} />;
+          const dynamicOptions = field.name === "classId" ? classes.map((row) => ({ value: row.id, label: row.name ?? row.code ?? row.id })) : field.name === "className" ? classes.map((row) => ({ value: row.name, label: row.name ?? row.code ?? row.id })) : field.name === "studentId" ? [{ value: "", label: "No child yet" }, ...students.map((row) => ({ value: row.id, label: `${row.name} (${row.admissionNumber ?? "No admission #"} )` }))] : field.options;
+          return <FieldControl key={field.name} field={{ ...field, type: dynamicOptions?.length ? "select" : field.type, options: dynamicOptions }} value={form[field.name]} onChange={(value) => setForm((current) => ({ ...current, [field.name]: value }))} />;
         })}
       </div>
       <div className="mt-4 flex flex-wrap gap-2">
@@ -739,7 +754,7 @@ function ResourceTable({ config, rows, loading, error, onRetry, onEdit }: { conf
   );
 }
 
-function TeacherAssignments({ refreshKey }: { refreshKey: number }) {
+function TeacherAssignments({ refreshKey, onChanged }: { refreshKey: number; onChanged: () => void }) {
   const [editing, setEditing] = useState<ResourceRow | null>(null);
   const config: ResourceConfig = {
     moduleId: "teachers",
@@ -784,6 +799,7 @@ function TeacherAssignments({ refreshKey }: { refreshKey: number }) {
       <ResourceForm config={dynamicConfig} editing={editing} onCancel={() => setEditing(null)} onSaved={(row) => {
         setRows((current) => editing ? current.map((item) => item.id === row.id ? row : item) : [row, ...current]);
         setEditing(null);
+        onChanged();
         refresh();
       }} />
       <ResourceTable config={config} rows={rows} loading={loading} error={error} onRetry={refresh} onEdit={setEditing} />
@@ -850,20 +866,24 @@ function ParentLinking({ rows, onChanged }: { rows: ResourceRow[]; onChanged: ()
   );
 }
 
-function ModuleStatusCard({ module, dashboard }: { module: ModuleConfig; dashboard: ReturnType<typeof normalizeSchoolAdminDashboard> }) {
+function ModuleStatusCard({ module, dashboard, readiness, onOpenModule }: { module: ModuleConfig; dashboard: ReturnType<typeof normalizeSchoolAdminDashboard>; readiness: ReadinessData | null; onOpenModule: (moduleId: ModuleId) => void }) {
   const Icon = module.icon;
-  const count = module.countKey ? dashboard.metrics[module.countKey] : undefined;
+  const moduleReadiness = readiness?.modules[module.id];
+  const count = readinessCountFor(module.id, readiness) ?? (module.countKey ? dashboard.metrics[module.countKey] : undefined);
+  const status = moduleReadiness ? readinessStatusToModuleStatus(moduleReadiness.status) : module.status;
+  const canOpen = openedModules.has(module.id);
   return (
     <article className="flex h-full flex-col rounded-lg border border-border bg-background p-4">
       <div className="flex items-start justify-between gap-3">
         <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary"><Icon aria-hidden={true} size={19} /></span>
-        <StatusBadge status={module.status} />
+        <StatusBadge status={status} />
       </div>
       <h3 className="mt-4 text-base font-semibold">{module.label}</h3>
       <p className="mt-2 text-sm leading-6 text-muted-foreground">{module.purpose}</p>
       {typeof count === "number" ? <p className="mt-3 text-sm font-medium">Real count: {formatNumber(count)}</p> : null}
-      <button className="mt-auto inline-flex min-h-10 w-full items-center justify-center rounded-md border border-border bg-surface px-3 text-sm font-medium text-muted-foreground" type="button" disabled>
-        {module.nextAction}
+      {moduleReadiness?.missingDependencies.length ? <p className="mt-2 text-xs leading-5 text-muted-foreground">Missing: {moduleReadiness.missingDependencies.join(", ")}</p> : null}
+      <button className={`mt-auto inline-flex min-h-10 w-full items-center justify-center rounded-md border px-3 text-sm font-medium ${canOpen ? "border-primary bg-primary text-primary-foreground" : "border-border bg-surface text-muted-foreground"}`} type="button" disabled={!canOpen} onClick={() => canOpen && onOpenModule(module.id)}>
+        {canOpen ? "Open workspace" : moduleReadiness?.nextAction ?? module.nextAction}
       </button>
     </article>
   );
@@ -970,6 +990,48 @@ function useDashboard(refreshKey: number) {
       .finally(() => setLoading(false));
   }, [refreshKey, retryKey]);
   return { data, loading, error, retry: () => setRetryKey((value) => value + 1) };
+}
+
+function useReadiness(refreshKey: number) {
+  const [data, setData] = useState<ReadinessData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [retryKey, setRetryKey] = useState(0);
+  useEffect(() => {
+    setLoading(true);
+    setError(null);
+    api("readiness")
+      .then((payload: ApiOne<ReadinessData>) => setData(payload.data))
+      .catch((caught) => setError(caught instanceof Error ? caught.message : "Setup readiness could not load."))
+      .finally(() => setLoading(false));
+  }, [refreshKey, retryKey]);
+  return { data, loading, error, retry: () => setRetryKey((value) => value + 1) };
+}
+
+function readinessStatusToModuleStatus(status: ReadinessStatus): ModuleStatus {
+  if (status === "READY") return "Ready";
+  if (status === "COMING_LATER") return "Coming Later";
+  if (status === "DEPENDENCY_REQUIRED") return "Locked";
+  return "Setup Required";
+}
+
+function readinessCountFor(moduleId: ModuleId, readiness: ReadinessData | null) {
+  const keyByModule: Partial<Record<ModuleId, string>> = {
+    academic: "academicYears",
+    classes: "classes",
+    sections: "sections",
+    subjects: "subjects",
+    students: "students",
+    teachers: "teachers",
+    parents: "parentGuardians",
+    attendance: "attendanceRecords",
+    exams: "examRecords",
+    fees: "feeRecords",
+    library: "libraryBooks",
+    lms: "lmsProgress"
+  };
+  const key = keyByModule[moduleId];
+  return key ? readiness?.counts?.[key] : undefined;
 }
 
 async function api(path: string, init?: RequestInit) {

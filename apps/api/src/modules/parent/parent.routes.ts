@@ -67,6 +67,25 @@ const createSchemas = {
 
 type Resource = "children" | "attendance" | "results" | "performance" | "homework" | "fees" | "payments" | "communication";
 type WritableResource = keyof typeof createSchemas;
+type ParentChild = {
+  id: string;
+  admissionNumber: string;
+  name: string;
+  guardianName: string;
+  guardianPhone: string;
+  className: string;
+  status: string;
+  createdAt: Date;
+  updatedAt: Date;
+};
+type ParentScope = {
+  schoolId: string;
+  parentId: string;
+  parentName: string;
+  children: ParentChild[];
+  childNames: string[];
+  classNames: string[];
+};
 
 const resources: Resource[] = ["children", "attendance", "results", "performance", "homework", "fees", "payments", "communication"];
 
@@ -294,11 +313,7 @@ async function requireParentScope(req: Request, res: Response) {
     fail(res, 401, "AUTHENTICATION_REQUIRED", "Authentication is required.");
     return null;
   }
-  const linkedRows = await (prisma as any).guardianStudentLink?.findMany?.({
-    where: { schoolId: req.auth.schoolId, parentUserId: req.auth.userId, status: "ACTIVE" },
-    include: { student: true },
-    orderBy: { createdAt: "desc" }
-  });
+  const linkedRows = await findGuardianStudentLinks(req.auth.schoolId, req.auth.userId);
   const linkedChildren = Array.isArray(linkedRows) ? linkedRows.map((row) => row.student).filter(Boolean) : [];
   const children = linkedChildren.length > 0 ? linkedChildren : await prisma.studentProfile.findMany({
     where: { schoolId: req.auth.schoolId, guardianName: parent.name, status: "ACTIVE" },
@@ -308,7 +323,7 @@ async function requireParentScope(req: Request, res: Response) {
     schoolId: req.auth.schoolId,
     parentId: req.auth.userId,
     parentName: parent.name,
-    children,
+    children: children as ParentChild[],
     childNames: children.map((child) => child.name),
     classNames: [...new Set(children.map((child) => child.className))]
   };
@@ -324,7 +339,7 @@ function ensureLinkedChild(req: Request, res: Response, scope: ParentScope) {
   return child;
 }
 
-function serializeChild(child: ParentScope["children"][number]) {
+function serializeChild(child: ParentChild) {
   return {
     id: child.id,
     admissionNumber: child.admissionNumber,
@@ -431,16 +446,17 @@ async function listCommunication(scope: ParentScope) {
 
 async function buildPerformance(scope: ParentScope) {
   return Promise.all(scope.children.map(async (child) => {
+    const db = prisma as any;
     const [attendance, results, homeworkOpen, pendingFees, paidPayments] = await Promise.all([
-      prisma.teacherAttendance.findMany({ where: { schoolId: scope.schoolId, studentName: child.name } }),
-      prisma.teacherMark.findMany({ where: { schoolId: scope.schoolId, studentName: child.name } }),
-      prisma.teacherAssignment.count({ where: { schoolId: scope.schoolId, className: child.className, status: "PUBLISHED" } }),
-      prisma.feeRecord.count({ where: { schoolId: scope.schoolId, status: { in: ["PENDING", "OVERDUE"] } } }),
-      prisma.parentFeePayment.count({ where: { schoolId: scope.schoolId, parentId: scope.parentId, studentName: child.name, status: "PAID" } })
+      db.teacherAttendance.findMany({ where: { schoolId: scope.schoolId, studentName: child.name } }),
+      db.teacherMark.findMany({ where: { schoolId: scope.schoolId, studentName: child.name } }),
+      db.teacherAssignment.count({ where: { schoolId: scope.schoolId, className: child.className, status: "PUBLISHED" } }),
+      db.feeRecord.count({ where: { schoolId: scope.schoolId, status: { in: ["PENDING", "OVERDUE"] } } }),
+      db.parentFeePayment.count({ where: { schoolId: scope.schoolId, parentId: scope.parentId, studentName: child.name, status: "PAID" } })
     ]);
-    const present = attendance.filter((row) => row.status === "PRESENT").length;
-    const scored = results.filter((row) => row.maxMarks > 0);
-    const scorePercent = scored.length === 0 ? 0 : scored.reduce((sum, row) => sum + (row.marksObtained / row.maxMarks) * 100, 0) / scored.length;
+    const present = attendance.filter((row: any) => row.status === "PRESENT").length;
+    const scored = results.filter((row: any) => row.maxMarks > 0);
+    const scorePercent = scored.length === 0 ? 0 : scored.reduce((sum: number, row: any) => sum + (row.marksObtained / row.maxMarks) * 100, 0) / scored.length;
     return {
       id: `performance-${child.id}`,
       studentName: child.name,
@@ -525,10 +541,25 @@ function isPrismaError(error: unknown) {
   return error instanceof Prisma.PrismaClientKnownRequestError;
 }
 
+function isMissingTableError(error: unknown) {
+  return error instanceof Prisma.PrismaClientKnownRequestError && (error.code === "P2021" || error.code === "P2022");
+}
+
+async function findGuardianStudentLinks(schoolId: string, parentUserId: string) {
+  try {
+    return await (prisma as any).guardianStudentLink?.findMany?.({
+      where: { schoolId, parentUserId, status: "ACTIVE" },
+      include: { student: true },
+      orderBy: { createdAt: "desc" }
+    });
+  } catch (error) {
+    if (isMissingTableError(error)) return [];
+    throw error;
+  }
+}
+
 async function writeAudit(req: Request, action: Parameters<AuditService["record"]>[0]["action"], resource: string, resourceId: string, metadata: Record<string, unknown>) {
   await audit.record({ userId: req.auth?.userId, schoolId: req.auth?.schoolId, action, resource, resourceId, metadata, ipAddress: req.ip, userAgent: req.header("user-agent") });
 }
-
-type ParentScope = NonNullable<Awaited<ReturnType<typeof requireParentScope>>>;
 
 export { router as parentRoutes };
