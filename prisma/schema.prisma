@@ -66,6 +66,13 @@ enum BackupStatus {
   RESTORED
 }
 
+enum GuardianRelationType {
+  FATHER
+  MOTHER
+  GUARDIAN
+  OTHER
+}
+
 enum LeaveRequestType {
   FULL_DAY
   MULTI_DAY
@@ -116,6 +123,7 @@ model User {
   leaveRequestsRequested LeaveRequest[] @relation("LeaveRequestRequestedBy")
   leaveRequestsReviewed LeaveRequest[] @relation("LeaveRequestReviewedBy")
   leaveRequestTimelineEvents LeaveRequestTimeline[] @relation("LeaveRequestTimelineActor")
+  guardianStudentLinks GuardianStudentLink[] @relation("GuardianStudentLinkGuardian")
 }
 
 model School {
@@ -162,6 +170,8 @@ model School {
   parentFeePayments ParentFeePayment[]
   parentPortalMessages ParentPortalMessage[]
   leaveRequests LeaveRequest[]
+  guardianStudentLinks GuardianStudentLink[]
+  teacherSubjectAssignments TeacherSubjectAssignment[]
   admissionApplications AdmissionApplication[]
   admissionEnrollments AdmissionEnrollment[]
   admissionDocuments AdmissionDocument[]
@@ -608,6 +618,7 @@ model ClassLevel {
   updatedAt DateTime @updatedAt
   school    School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   sections  Section[]
+  teacherSubjectAssignments TeacherSubjectAssignment[]
 
   @@unique([schoolId, code])
   @@index([schoolId, status])
@@ -624,6 +635,7 @@ model Section {
   updatedAt DateTime   @updatedAt
   school    School     @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   class     ClassLevel @relation(fields: [classId], references: [id], onDelete: Cascade)
+  teacherSubjectAssignments TeacherSubjectAssignment[]
 
   @@unique([schoolId, classId, name])
   @@index([schoolId, status])
@@ -639,6 +651,7 @@ model Subject {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   school    School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  teacherSubjectAssignments TeacherSubjectAssignment[]
 
   @@unique([schoolId, code])
   @@index([schoolId, status])
@@ -656,6 +669,7 @@ model TeacherProfile {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
   school         School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  subjectAssignments TeacherSubjectAssignment[]
 
   @@unique([schoolId, employeeNumber])
   @@unique([schoolId, email])
@@ -675,11 +689,57 @@ model StudentProfile {
   updatedAt       DateTime @updatedAt
   school          School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   leaveRequests   LeaveRequest[]
+  guardianLinks   GuardianStudentLink[]
 
   @@unique([schoolId, admissionNumber])
   @@index([schoolId, status])
 }
 
+model GuardianStudentLink {
+  id                 String               @id @default(cuid())
+  schoolId           String
+  parentUserId       String
+  studentId          String
+  relationType       GuardianRelationType @default(GUARDIAN)
+  isEmergencyContact Boolean              @default(false)
+  canLogin           Boolean              @default(true)
+  status             String               @default("ACTIVE")
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+  school             School               @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  parent             User                 @relation("GuardianStudentLinkGuardian", fields: [parentUserId], references: [id], onDelete: Cascade)
+  student            StudentProfile       @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([schoolId, parentUserId, studentId])
+  @@index([schoolId, parentUserId])
+  @@index([schoolId, studentId])
+  @@index([schoolId, relationType])
+  @@index([schoolId, status])
+}
+
+model TeacherSubjectAssignment {
+  id        String   @id @default(cuid())
+  schoolId  String
+  teacherId String
+  classId   String
+  sectionId String?
+  subjectId String
+  status    String   @default("ACTIVE")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  school    School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  teacher   TeacherProfile @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  class     ClassLevel @relation(fields: [classId], references: [id], onDelete: Cascade)
+  section   Section? @relation(fields: [sectionId], references: [id], onDelete: SetNull)
+  subject   Subject @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+
+  @@unique([schoolId, teacherId, classId, sectionId, subjectId])
+  @@index([schoolId, teacherId])
+  @@index([schoolId, classId])
+  @@index([schoolId, sectionId])
+  @@index([schoolId, subjectId])
+  @@index([schoolId, status])
+}
 model LeaveRequest {
   id              String             @id @default(cuid())
   schoolId        String
@@ -2279,3 +2339,5 @@ model HrSalarySlip {
   @@index([schoolId, employeeName])
   @@index([schoolId, payrollMonth])
 }
+
+

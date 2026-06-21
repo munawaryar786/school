@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
+import type { ComponentType, FormEvent } from "react";
 import {
   AlertCircle,
   BookOpen,
@@ -47,7 +48,7 @@ type ModuleId =
   | "settings";
 
 type ApiOne<T> = { success: true; data: T };
-type ApiList<T> = { success: true; data: T[] };
+type ApiList<T> = { success: true; data: T[]; pagination?: { total: number; page: number; pageSize: number; totalPages: number } };
 type LeaveRequest = {
   id: string;
   type: string;
@@ -61,8 +62,12 @@ type LeaveRequest = {
   student?: { name?: string | null; admissionNumber?: string | null; className?: string | null } | null;
   requestedBy?: { name?: string | null; email?: string | null } | null;
 };
-type IconType = React.ComponentType<{ size?: number; "aria-hidden"?: boolean; className?: string }>;
+type IconType = ComponentType<{ size?: number; "aria-hidden"?: boolean; className?: string }>;
 type ModuleStatus = "Ready" | "Setup Required" | "Preview" | "Locked" | "Coming Later";
+type FieldType = "text" | "date" | "number" | "select" | "checkbox";
+type ResourceRow = Record<string, any> & { id: string; status?: string };
+type FieldConfig = { name: string; label: string; type?: FieldType; required?: boolean; options?: Array<{ value: string; label: string }>; placeholder?: string };
+type ResourceConfig = { moduleId: ModuleId; resource: string; title: string; description: string; fields: FieldConfig[]; columns: Array<{ key: string; label: string; render?: (row: ResourceRow) => string }>; submitLabel: string; emptyText: string };
 
 type ModuleConfig = {
   id: ModuleId;
@@ -96,6 +101,148 @@ const modules: ModuleConfig[] = [
   { id: "reports", label: "Reports", icon: ClipboardList, purpose: "School, teacher, student, attendance, finance, exam, and library reports.", status: "Preview", nextAction: "Reports will use real database queries only", requirements: "Needs populated module data." },
   { id: "settings", label: "Settings", icon: Settings, purpose: "School profile, campuses, academic defaults, branding, and provider settings.", status: "Preview", nextAction: "Configure once settings workflow is enabled", requirements: "Needs school profile and provider configuration records." }
 ];
+
+const openedModules = new Set<ModuleId>(["academic", "classes", "sections", "subjects", "students", "teachers", "parents"]);
+const lockedDependencyText: Partial<Record<ModuleId, string>> = {
+  attendance: "Locked until academic years, classes, sections, students, and teacher assignment foundations are complete.",
+  timetable: "Locked until classes, sections, subjects, and teacher assignments are available.",
+  exams: "Locked until academic setup and subject structure are ready.",
+  fees: "Locked until student profiles and finance setup are opened in a later phase.",
+  library: "Locked until the library circulation phase opens catalog and copy workflows.",
+  reading: "Locked until library catalog and reading-program models are implemented.",
+  lms: "Locked until courses, teacher assignments, and LMS content models are opened."
+};
+
+const statusOptions = [{ value: "ACTIVE", label: "Active" }, { value: "INACTIVE", label: "Inactive" }];
+const relationOptions = [{ value: "FATHER", label: "Father" }, { value: "MOTHER", label: "Mother" }, { value: "GUARDIAN", label: "Guardian" }, { value: "OTHER", label: "Other" }];
+
+const resourceConfigs: Record<Exclude<ModuleId, "dashboard" | "admissions" | "attendance" | "timetable" | "exams" | "fees" | "library" | "reading" | "lms" | "notices" | "reports" | "settings">, ResourceConfig> = {
+  academic: {
+    moduleId: "academic",
+    resource: "academic-years",
+    title: "Academic Setup",
+    description: "Create academic years and mark the active/current year for this school.",
+    submitLabel: "Save academic year",
+    emptyText: "No academic year exists yet.",
+    fields: [
+      { name: "name", label: "Academic year", required: true, placeholder: "2026-2027" },
+      { name: "startsOn", label: "Starts on", type: "date", required: true },
+      { name: "endsOn", label: "Ends on", type: "date", required: true },
+      { name: "status", label: "Status", type: "select", options: statusOptions }
+    ],
+    columns: [
+      { key: "name", label: "Year" },
+      { key: "startsOn", label: "Starts", render: (row) => shortDate(row.startsOn) },
+      { key: "endsOn", label: "Ends", render: (row) => shortDate(row.endsOn) },
+      { key: "status", label: "Status" }
+    ]
+  },
+  classes: {
+    moduleId: "classes",
+    resource: "classes",
+    title: "Classes",
+    description: "Manage grade/class records. Sections, subjects, students, attendance, and timetable depend on these.",
+    submitLabel: "Save class",
+    emptyText: "No class records exist yet.",
+    fields: [
+      { name: "name", label: "Class name", required: true, placeholder: "Grade 1" },
+      { name: "code", label: "Code", required: true, placeholder: "G1" },
+      { name: "status", label: "Status", type: "select", options: statusOptions }
+    ],
+    columns: [{ key: "name", label: "Class" }, { key: "code", label: "Code" }, { key: "status", label: "Status" }]
+  },
+  sections: {
+    moduleId: "sections",
+    resource: "sections",
+    title: "Sections",
+    description: "Create class sections and capacity foundations for rosters and timetable grouping.",
+    submitLabel: "Save section",
+    emptyText: "No section records exist yet.",
+    fields: [
+      { name: "classId", label: "Class", type: "select", required: true },
+      { name: "name", label: "Section", required: true, placeholder: "A" },
+      { name: "capacity", label: "Capacity", type: "number", required: true },
+      { name: "status", label: "Status", type: "select", options: statusOptions }
+    ],
+    columns: [
+      { key: "name", label: "Section" },
+      { key: "class", label: "Class", render: (row) => row.class?.name ?? row.classId },
+      { key: "capacity", label: "Capacity" },
+      { key: "status", label: "Status" }
+    ]
+  },
+  subjects: {
+    moduleId: "subjects",
+    resource: "subjects",
+    title: "Subjects/Courses",
+    description: "Manage the subject catalog used by teacher assignments, exams, timetable, and LMS later.",
+    submitLabel: "Save subject",
+    emptyText: "No subject records exist yet.",
+    fields: [
+      { name: "name", label: "Subject", required: true, placeholder: "Mathematics" },
+      { name: "code", label: "Code", required: true, placeholder: "MATH" },
+      { name: "type", label: "Type", type: "select", options: [{ value: "CORE", label: "Core" }, { value: "ELECTIVE", label: "Elective" }] },
+      { name: "status", label: "Status", type: "select", options: statusOptions }
+    ],
+    columns: [{ key: "name", label: "Subject" }, { key: "code", label: "Code" }, { key: "type", label: "Type" }, { key: "status", label: "Status" }]
+  },
+  students: {
+    moduleId: "students",
+    resource: "students",
+    title: "Students",
+    description: "Create and edit student profiles. This schema currently stores class assignment as class name.",
+    submitLabel: "Save student",
+    emptyText: "No student profiles exist yet.",
+    fields: [
+      { name: "admissionNumber", label: "Admission number", required: true },
+      { name: "name", label: "Student name", required: true },
+      { name: "guardianName", label: "Guardian name", required: true },
+      { name: "guardianPhone", label: "Guardian phone", required: true },
+      { name: "className", label: "Class", required: true },
+      { name: "status", label: "Status", type: "select", options: statusOptions }
+    ],
+    columns: [{ key: "admissionNumber", label: "Admission #" }, { key: "name", label: "Name" }, { key: "className", label: "Class" }, { key: "guardianName", label: "Guardian" }, { key: "status", label: "Status" }]
+  },
+  teachers: {
+    moduleId: "teachers",
+    resource: "teachers",
+    title: "Teachers",
+    description: "Manage teacher profiles and add class/section/subject assignment foundations below.",
+    submitLabel: "Save teacher",
+    emptyText: "No teacher profiles exist yet.",
+    fields: [
+      { name: "employeeNumber", label: "Employee number", required: true },
+      { name: "name", label: "Teacher name", required: true },
+      { name: "email", label: "Email", required: true },
+      { name: "phone", label: "Phone" },
+      { name: "specialization", label: "Specialization" },
+      { name: "status", label: "Status", type: "select", options: statusOptions }
+    ],
+    columns: [{ key: "employeeNumber", label: "Employee #" }, { key: "name", label: "Name" }, { key: "email", label: "Email" }, { key: "specialization", label: "Specialization" }, { key: "status", label: "Status" }]
+  },
+  parents: {
+    moduleId: "parents",
+    resource: "parents",
+    title: "Parents/Guardians",
+    description: "Create parent accounts and link them to existing student profiles through verified guardian links.",
+    submitLabel: "Save parent",
+    emptyText: "No parent or guardian accounts exist yet.",
+    fields: [
+      { name: "name", label: "Parent/guardian name", required: true },
+      { name: "email", label: "Email", required: true },
+      { name: "studentId", label: "Link child", type: "select" },
+      { name: "relationType", label: "Relation", type: "select", options: relationOptions },
+      { name: "isEmergencyContact", label: "Emergency contact", type: "checkbox" },
+      { name: "loginEnabled", label: "Login enabled", type: "checkbox" }
+    ],
+    columns: [
+      { key: "name", label: "Name" },
+      { key: "email", label: "Email" },
+      { key: "loginEnabled", label: "Login", render: (row) => row.loginEnabled ? "Enabled" : "Disabled" },
+      { key: "links", label: "Linked children", render: (row) => Array.isArray(row.links) && row.links.length ? row.links.map((link: any) => `${link.student?.name ?? "Student"} (${humanize(link.relationType)})`).join(", ") : "None" }
+    ]
+  }
+};
 
 export function SchoolAdminPortal() {
   const [activeModule, setActiveModule] = useState<ModuleId>("dashboard");
@@ -143,7 +290,7 @@ export function SchoolAdminPortal() {
           </button>
         </header>
 
-        {activeModule === "dashboard" ? <Dashboard refreshKey={refreshKey} /> : <ModulePreview module={active} />}
+        {activeModule === "dashboard" ? <Dashboard refreshKey={refreshKey} /> : openedModules.has(activeModule) ? <CorePeopleWorkspace moduleId={activeModule} refreshKey={refreshKey} /> : <ModulePreview module={active} />}
       </main>
     </div>
   );
@@ -409,6 +556,7 @@ function MetricCard({ label, value, detail, Icon }: { label: string; value: numb
 
 function ModulePreview({ module }: { module: ModuleConfig }) {
   const Icon = module.icon;
+  const dependencyText = lockedDependencyText[module.id] ?? module.requirements;
   return (
     <section className="rounded-lg border border-border bg-surface p-6 shadow-panel">
       <div className="flex max-w-4xl items-start gap-4">
@@ -420,7 +568,7 @@ function ModulePreview({ module }: { module: ModuleConfig }) {
           <div className="mt-4 grid gap-3 md:grid-cols-2">
             <div className="rounded-md border border-border bg-background p-3">
               <p className="text-xs font-medium uppercase text-muted-foreground">Setup requirements</p>
-              <p className="mt-1 text-sm leading-5">{module.requirements}</p>
+              <p className="mt-1 text-sm leading-5">{dependencyText}</p>
             </div>
             <div className="rounded-md border border-border bg-background p-3">
               <p className="text-xs font-medium uppercase text-muted-foreground">Next safe action</p>
@@ -428,10 +576,270 @@ function ModulePreview({ module }: { module: ModuleConfig }) {
             </div>
           </div>
           <button className="mt-5 inline-flex min-h-10 items-center justify-center rounded-md border border-border bg-muted px-4 text-sm font-medium text-muted-foreground" type="button" disabled>
-            Workflow not opened in Phase 32B
+            Dependency required
           </button>
         </div>
       </div>
+    </section>
+  );
+}
+
+function CorePeopleWorkspace({ moduleId, refreshKey }: { moduleId: ModuleId; refreshKey: number }) {
+  const config = resourceConfigs[moduleId as keyof typeof resourceConfigs];
+  const [editing, setEditing] = useState<ResourceRow | null>(null);
+  const { rows, loading, error, refresh, setRows } = useResourceList(config.resource, refreshKey);
+
+  return (
+    <div className="space-y-5">
+      <section className="rounded-lg border border-border bg-surface p-5 shadow-panel">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <StatusBadge status="Ready" />
+            <h2 className="mt-3 text-2xl font-semibold">{config.title}</h2>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">{config.description}</p>
+          </div>
+          <button className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-border bg-background px-3 text-sm font-medium" onClick={refresh} type="button">
+            <RefreshCw aria-hidden={true} size={15} />
+            Refresh
+          </button>
+        </div>
+      </section>
+
+      <section className="grid gap-4 xl:grid-cols-[380px_1fr]">
+        <ResourceForm config={config} editing={editing} onCancel={() => setEditing(null)} onSaved={(row) => {
+          setRows((current) => editing ? current.map((item) => item.id === row.id ? row : item) : [row, ...current]);
+          setEditing(null);
+          refresh();
+        }} />
+        <ResourceTable config={config} rows={rows} loading={loading} error={error} onRetry={refresh} onEdit={setEditing} />
+      </section>
+
+      {moduleId === "teachers" ? <TeacherAssignments refreshKey={refreshKey} /> : null}
+      {moduleId === "parents" ? <ParentLinking rows={rows} onChanged={refresh} /> : null}
+    </div>
+  );
+}
+
+function ResourceForm({ config, editing, onCancel, onSaved }: { config: ResourceConfig; editing: ResourceRow | null; onCancel: () => void; onSaved: (row: ResourceRow) => void }) {
+  const [form, setForm] = useState<Record<string, any>>({});
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
+  const { rows: classes } = useResourceList("classes", 0, config.resource === "sections");
+  const { rows: students } = useResourceList("students", 0, config.resource === "parents");
+
+  useEffect(() => {
+    const next: Record<string, any> = {};
+    config.fields.forEach((field) => {
+      if (editing) next[field.name] = normalizeFieldValue(editing[field.name], field.type);
+      else if (field.type === "checkbox") next[field.name] = false;
+      else if (field.type === "select") next[field.name] = field.options?.[0]?.value ?? "";
+      else if (field.name === "capacity") next[field.name] = 40;
+      else next[field.name] = "";
+    });
+    setForm(next);
+    setMessage(null);
+  }, [config, editing]);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSaving(true);
+    setMessage(null);
+    try {
+      const body = config.fields.reduce<Record<string, any>>((acc, field) => {
+        const value = form[field.name];
+        if (value === "" && !field.required) return acc;
+        acc[field.name] = field.type === "number" ? Number(value) : value;
+        return acc;
+      }, {});
+      const payload: ApiOne<ResourceRow> = await api(editing ? `${config.resource}/${editing.id}` : config.resource, {
+        method: editing ? "PATCH" : "POST",
+        body: JSON.stringify(body)
+      });
+      setMessage({ tone: "success", text: editing ? "Record updated." : "Record created." });
+      onSaved(payload.data);
+    } catch (caught) {
+      setMessage({ tone: "error", text: caught instanceof Error ? caught.message : "Record could not be saved." });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form className="rounded-lg border border-border bg-surface p-4 shadow-panel" onSubmit={submit}>
+      <div className="border-b border-border pb-3">
+        <h3 className="text-base font-semibold">{editing ? `Edit ${config.title}` : config.submitLabel}</h3>
+        <p className="mt-1 text-sm text-muted-foreground">School scoped. Required fields are validated before saving.</p>
+      </div>
+      {message ? <div className={`mt-4 rounded-md border p-3 text-sm ${message.tone === "success" ? "border-success/30 bg-success/10 text-success" : "border-error/30 bg-error/10 text-error"}`}>{message.text}</div> : null}
+      <div className="mt-4 grid gap-3">
+        {config.fields.map((field) => {
+          const dynamicOptions = field.name === "classId" ? classes.map((row) => ({ value: row.id, label: row.name ?? row.code ?? row.id })) : field.name === "studentId" ? [{ value: "", label: "No child yet" }, ...students.map((row) => ({ value: row.id, label: `${row.name} (${row.admissionNumber ?? "No admission #"} )` }))] : field.options;
+          return <FieldControl key={field.name} field={{ ...field, options: dynamicOptions }} value={form[field.name]} onChange={(value) => setForm((current) => ({ ...current, [field.name]: value }))} />;
+        })}
+      </div>
+      <div className="mt-4 flex flex-wrap gap-2">
+        <button className="inline-flex min-h-10 items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-60" type="submit" disabled={saving}>{saving ? "Saving..." : config.submitLabel}</button>
+        {editing ? <button className="inline-flex min-h-10 items-center justify-center rounded-md border border-border bg-background px-4 text-sm font-medium" type="button" onClick={onCancel}>Cancel edit</button> : null}
+      </div>
+    </form>
+  );
+}
+
+function FieldControl({ field, value, onChange }: { field: FieldConfig; value: any; onChange: (value: any) => void }) {
+  if (field.type === "checkbox") {
+    return (
+      <label className="flex min-h-10 items-center gap-2 rounded-md border border-border bg-background px-3 text-sm font-medium">
+        <input checked={Boolean(value)} onChange={(event) => onChange(event.target.checked)} type="checkbox" />
+        {field.label}
+      </label>
+    );
+  }
+  return (
+    <label className="grid gap-1 text-sm font-medium">
+      {field.label}
+      {field.type === "select" ? (
+        <select className="min-h-10 rounded-md border border-border bg-background px-3 text-sm" required={field.required} value={value ?? ""} onChange={(event) => onChange(event.target.value)}>
+          {(field.options ?? []).map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+        </select>
+      ) : (
+        <input className="min-h-10 rounded-md border border-border bg-background px-3 text-sm" required={field.required} type={field.type ?? "text"} value={value ?? ""} placeholder={field.placeholder} onChange={(event) => onChange(event.target.value)} />
+      )}
+    </label>
+  );
+}
+
+function ResourceTable({ config, rows, loading, error, onRetry, onEdit }: { config: ResourceConfig; rows: ResourceRow[]; loading: boolean; error: string | null; onRetry: () => void; onEdit: (row: ResourceRow) => void }) {
+  return (
+    <section className="rounded-lg border border-border bg-surface shadow-panel">
+      <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
+        <div>
+          <h3 className="text-base font-semibold">{config.title} records</h3>
+          <p className="mt-1 text-xs text-muted-foreground">Real database records only. No static rows.</p>
+        </div>
+        <span className="rounded-md border border-border bg-background px-2 py-1 text-sm font-medium">{formatNumber(rows.length)}</span>
+      </div>
+      {loading ? <StatePanel text={`Loading ${config.title.toLowerCase()}`} compact /> : error ? <StatePanel text={error} tone="error" compact onRetry={onRetry} /> : rows.length === 0 ? <StatePanel text={config.emptyText} compact /> : (
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-border text-sm">
+            <thead className="bg-muted/40 text-left text-xs uppercase text-muted-foreground">
+              <tr>{config.columns.map((column) => <th key={column.key} className="px-4 py-3 font-semibold">{column.label}</th>)}<th className="px-4 py-3 font-semibold">Action</th></tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {rows.map((row) => (
+                <tr key={row.id}>
+                  {config.columns.map((column) => <td key={column.key} className="max-w-[260px] px-4 py-3 align-top">{column.render ? column.render(row) : String(row[column.key] ?? "")}</td>)}
+                  <td className="px-4 py-3 align-top"><button className="rounded-md border border-border bg-background px-3 py-1.5 text-sm font-medium" type="button" onClick={() => onEdit(row)}>Edit</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function TeacherAssignments({ refreshKey }: { refreshKey: number }) {
+  const config: ResourceConfig = {
+    moduleId: "teachers",
+    resource: "teacher-assignments",
+    title: "Teacher Assignments",
+    description: "Assign teachers to class, optional section, and subject foundations.",
+    submitLabel: "Save assignment",
+    emptyText: "No teacher assignments exist yet.",
+    fields: [
+      { name: "teacherId", label: "Teacher", type: "select", required: true },
+      { name: "classId", label: "Class", type: "select", required: true },
+      { name: "sectionId", label: "Section", type: "select" },
+      { name: "subjectId", label: "Subject", type: "select", required: true },
+      { name: "status", label: "Status", type: "select", options: statusOptions }
+    ],
+    columns: [
+      { key: "teacher", label: "Teacher", render: (row) => row.teacher?.name ?? row.teacherId },
+      { key: "class", label: "Class", render: (row) => row.class?.name ?? row.classId },
+      { key: "section", label: "Section", render: (row) => row.section?.name ?? "All sections" },
+      { key: "subject", label: "Subject", render: (row) => row.subject?.name ?? row.subjectId },
+      { key: "status", label: "Status" }
+    ]
+  };
+  const { rows, loading, error, refresh, setRows } = useResourceList("teacher-assignments", refreshKey);
+  const { rows: teachers } = useResourceList("teachers", refreshKey);
+  const { rows: classes } = useResourceList("classes", refreshKey);
+  const { rows: sections } = useResourceList("sections", refreshKey);
+  const { rows: subjects } = useResourceList("subjects", refreshKey);
+  const dynamicConfig = {
+    ...config,
+    fields: config.fields.map((field) => {
+      if (field.name === "teacherId") return { ...field, options: teachers.map((row) => ({ value: row.id, label: row.name })) };
+      if (field.name === "classId") return { ...field, options: classes.map((row) => ({ value: row.id, label: row.name })) };
+      if (field.name === "sectionId") return { ...field, options: [{ value: "", label: "All sections" }, ...sections.map((row) => ({ value: row.id, label: `${row.class?.name ?? "Class"} - ${row.name}` }))] };
+      if (field.name === "subjectId") return { ...field, options: subjects.map((row) => ({ value: row.id, label: row.name })) };
+      return field;
+    })
+  };
+
+  return (
+    <section className="grid gap-4 xl:grid-cols-[380px_1fr]">
+      <ResourceForm config={dynamicConfig} editing={null} onCancel={() => undefined} onSaved={(row) => { setRows((current) => [row, ...current]); refresh(); }} />
+      <ResourceTable config={config} rows={rows} loading={loading} error={error} onRetry={refresh} onEdit={() => undefined} />
+    </section>
+  );
+}
+
+function ParentLinking({ rows, onChanged }: { rows: ResourceRow[]; onChanged: () => void }) {
+  const [parentId, setParentId] = useState("");
+  const [studentId, setStudentId] = useState("");
+  const [relationType, setRelationType] = useState("GUARDIAN");
+  const [isEmergencyContact, setIsEmergencyContact] = useState(false);
+  const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
+  const { rows: students } = useResourceList("students", 0, true);
+
+  async function link(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setMessage(null);
+    try {
+      await api(`parents/${parentId}/link-child`, { method: "POST", body: JSON.stringify({ studentId, relationType, isEmergencyContact, canLogin: true }) });
+      setMessage({ tone: "success", text: "Child linked to parent." });
+      onChanged();
+    } catch (caught) {
+      setMessage({ tone: "error", text: caught instanceof Error ? caught.message : "Child could not be linked." });
+    }
+  }
+
+  async function toggleLogin(row: ResourceRow) {
+    setMessage(null);
+    try {
+      await api(`parents/${row.id}/login-status`, { method: "PATCH", body: JSON.stringify({ loginEnabled: !row.loginEnabled }) });
+      setMessage({ tone: "success", text: "Parent login status updated." });
+      onChanged();
+    } catch (caught) {
+      setMessage({ tone: "error", text: caught instanceof Error ? caught.message : "Login status could not be updated." });
+    }
+  }
+
+  return (
+    <section className="rounded-lg border border-border bg-surface p-4 shadow-panel">
+      <div className="border-b border-border pb-3">
+        <h3 className="text-base font-semibold">Parent-child linking</h3>
+        <p className="mt-1 text-sm text-muted-foreground">Links are validated by school scope before saving.</p>
+      </div>
+      {message ? <div className={`mt-4 rounded-md border p-3 text-sm ${message.tone === "success" ? "border-success/30 bg-success/10 text-success" : "border-error/30 bg-error/10 text-error"}`}>{message.text}</div> : null}
+      <form className="mt-4 grid gap-3 lg:grid-cols-5" onSubmit={link}>
+        <select className="min-h-10 rounded-md border border-border bg-background px-3 text-sm lg:col-span-2" required value={parentId} onChange={(event) => setParentId(event.target.value)}>
+          <option value="">Select parent</option>
+          {rows.map((row) => <option key={row.id} value={row.id}>{row.name} - {row.email}</option>)}
+        </select>
+        <select className="min-h-10 rounded-md border border-border bg-background px-3 text-sm lg:col-span-2" required value={studentId} onChange={(event) => setStudentId(event.target.value)}>
+          <option value="">Select student</option>
+          {students.map((row) => <option key={row.id} value={row.id}>{row.name} - {row.admissionNumber}</option>)}
+        </select>
+        <select className="min-h-10 rounded-md border border-border bg-background px-3 text-sm" value={relationType} onChange={(event) => setRelationType(event.target.value)}>
+          {relationOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+        </select>
+        <label className="flex min-h-10 items-center gap-2 rounded-md border border-border bg-background px-3 text-sm font-medium lg:col-span-2"><input checked={isEmergencyContact} onChange={(event) => setIsEmergencyContact(event.target.checked)} type="checkbox" />Emergency contact</label>
+        <button className="min-h-10 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground" type="submit">Link child</button>
+      </form>
+      {rows.length ? <div className="mt-4 flex flex-wrap gap-2">{rows.map((row) => <button key={row.id} className="rounded-md border border-border bg-background px-3 py-2 text-sm font-medium" type="button" onClick={() => toggleLogin(row)}>{row.loginEnabled ? "Disable" : "Enable"} login: {row.name}</button>)}</div> : null}
     </section>
   );
 }
@@ -507,6 +915,39 @@ function StatePanel({ text, tone, compact, onRetry }: { text: string; tone?: "er
       {onRetry ? <button className="ml-3 rounded-md border border-border px-3 py-1" onClick={onRetry} type="button">Retry</button> : null}
     </div>
   );
+}
+
+function useResourceList(resource: string, refreshKey: number, enabled = true) {
+  const [rows, setRows] = useState<ResourceRow[]>([]);
+  const [loading, setLoading] = useState(enabled);
+  const [error, setError] = useState<string | null>(null);
+  const [retryKey, setRetryKey] = useState(0);
+
+  useEffect(() => {
+    if (!enabled) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    api(`${resource}?pageSize=100`)
+      .then((payload: ApiList<ResourceRow>) => setRows(Array.isArray(payload.data) ? payload.data : []))
+      .catch((caught) => setError(caught instanceof Error ? caught.message : "Records could not load."))
+      .finally(() => setLoading(false));
+  }, [resource, refreshKey, retryKey, enabled]);
+
+  return { rows, loading, error, setRows, refresh: () => setRetryKey((value) => value + 1) };
+}
+
+function normalizeFieldValue(value: any, type?: FieldType) {
+  if (type === "date" && value) return new Date(value).toISOString().slice(0, 10);
+  if (type === "checkbox") return Boolean(value);
+  return value ?? "";
+}
+
+function shortDate(value: string) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "Not available" : new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(date);
 }
 
 function useDashboard(refreshKey: number) {

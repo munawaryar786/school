@@ -294,7 +294,13 @@ async function requireParentScope(req: Request, res: Response) {
     fail(res, 401, "AUTHENTICATION_REQUIRED", "Authentication is required.");
     return null;
   }
-  const children = await prisma.studentProfile.findMany({
+  const linkedRows = await (prisma as any).guardianStudentLink?.findMany?.({
+    where: { schoolId: req.auth.schoolId, parentUserId: req.auth.userId, status: "ACTIVE" },
+    include: { student: true },
+    orderBy: { createdAt: "desc" }
+  });
+  const linkedChildren = Array.isArray(linkedRows) ? linkedRows.map((row) => row.student).filter(Boolean) : [];
+  const children = linkedChildren.length > 0 ? linkedChildren : await prisma.studentProfile.findMany({
     where: { schoolId: req.auth.schoolId, guardianName: parent.name, status: "ACTIVE" },
     orderBy: { createdAt: "desc" }
   });

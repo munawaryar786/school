@@ -2,6 +2,8 @@ import { Router } from "express";
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
+import bcrypt from "bcryptjs";
+import crypto from "node:crypto";
 import { PERMISSIONS } from "@school-erp/shared";
 import { prisma } from "../../db/prisma";
 import { ok, fail } from "../../http/responses";
@@ -27,6 +29,38 @@ const leaveReviewSchema = z.object({
   status: leaveReviewStatusSchema,
   reviewerComment: z.string().trim().max(1000).optional().nullable()
 });
+
+const relationTypeSchema = z.enum(["FATHER", "MOTHER", "GUARDIAN", "OTHER"]);
+
+const parentCreateSchema = z.object({
+  name: z.string().trim().min(2),
+  email: z.string().trim().email().transform((value) => value.toLowerCase()),
+  loginEnabled: z.boolean().default(false),
+  studentId: z.string().trim().min(1).optional(),
+  relationType: relationTypeSchema.default("GUARDIAN"),
+  isEmergencyContact: z.boolean().default(false)
+});
+
+const parentLinkSchema = z.object({
+  studentId: z.string().trim().min(1),
+  relationType: relationTypeSchema.default("GUARDIAN"),
+  isEmergencyContact: z.boolean().default(false),
+  canLogin: z.boolean().default(true),
+  status: z.string().trim().min(1).default("ACTIVE")
+});
+
+const parentLoginStatusSchema = z.object({
+  loginEnabled: z.boolean()
+});
+
+const teacherAssignmentSchema = z.object({
+  teacherId: z.string().trim().min(1),
+  classId: z.string().trim().min(1),
+  sectionId: z.string().trim().min(1).optional().nullable(),
+  subjectId: z.string().trim().min(1),
+  status: z.string().trim().min(1).default("ACTIVE")
+});
+
 const schemas = {
   "academic-years": z.object({ name: z.string().min(2), startsOn: z.coerce.date(), endsOn: z.coerce.date(), status: z.string().default("ACTIVE") }),
   classes: z.object({ name: z.string().min(1), code: z.string().min(1), status: z.string().default("ACTIVE") }),
@@ -38,7 +72,8 @@ const schemas = {
   exams: z.object({ name: z.string().min(2), subject: z.string().min(1), examDate: z.coerce.date(), status: z.string().default("SCHEDULED") }),
   attendance: z.object({ personName: z.string().min(2), personType: z.string().default("STUDENT"), attendanceDate: z.coerce.date(), status: z.string().default("PRESENT") }),
   library: z.object({ title: z.string().min(2), author: z.string().min(2), isbn: z.string().min(2), copies: z.coerce.number().int().min(1).default(1), status: z.string().default("AVAILABLE") }),
-  timetable: z.object({ className: z.string().min(1), subject: z.string().min(1), teacher: z.string().min(1), dayOfWeek: z.string().min(1), startsAt: z.string().min(1), endsAt: z.string().min(1), status: z.string().default("ACTIVE") })
+  timetable: z.object({ className: z.string().min(1), subject: z.string().min(1), teacher: z.string().min(1), dayOfWeek: z.string().min(1), startsAt: z.string().min(1), endsAt: z.string().min(1), status: z.string().default("ACTIVE") }),
+  "teacher-assignments": teacherAssignmentSchema
 } as const;
 
 type Resource = keyof typeof schemas;
@@ -54,7 +89,8 @@ const modelByResource: Record<Resource, keyof typeof prisma> = {
   exams: "examRecord",
   attendance: "attendanceRecord",
   library: "libraryBook",
-  timetable: "timetableSlot"
+  timetable: "timetableSlot",
+  "teacher-assignments": "teacherSubjectAssignment"
 };
 
 const columnsByResource: Record<Resource, string[]> = {
@@ -68,7 +104,8 @@ const columnsByResource: Record<Resource, string[]> = {
   exams: ["id", "name", "subject", "examDate", "status"],
   attendance: ["id", "personName", "personType", "attendanceDate", "status"],
   library: ["id", "title", "author", "isbn", "copies", "status"],
-  timetable: ["id", "className", "subject", "teacher", "dayOfWeek", "startsAt", "endsAt", "status"]
+  timetable: ["id", "className", "subject", "teacher", "dayOfWeek", "startsAt", "endsAt", "status"],
+  "teacher-assignments": ["id", "teacherId", "classId", "sectionId", "subjectId", "status"]
 };
 
 router.use(authenticate, requirePermission(PERMISSIONS.SCHOOL_OPERATIONS_MANAGE));
@@ -214,6 +251,141 @@ router.patch("/leave-requests/:id/review", async (req, res, next) => {
     next(error);
   }
 });
+
+router.get("/parents", async (req, res, next) => {
+  try {
+    const schoolId = requireSchool(req, res);
+    if (!schoolId) return;
+    const query = pageQuerySchema.parse(req.query);
+    const where: Prisma.SchoolMembershipWhereInput = {
+      schoolId,
+      role: { code: "PARENT" },
+      ...(query.status ? { status: query.status as any } : {}),
+      ...(query.search ? {
+        OR: [
+          { user: { name: { contains: query.search, mode: "insensitive" } } },
+          { user: { email: { contains: query.search, mode: "insensitive" } } }
+        ]
+      } : {})
+    };
+    const [rows, total] = await Promise.all([
+      prisma.schoolMembership.findMany({
+        where,
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              isActive: true,
+              guardianStudentLinks: {
+                where: { schoolId },
+                include: { student: { select: { id: true, admissionNumber: true, name: true, className: true, status: true } } },
+                orderBy: { createdAt: "desc" }
+              }
+            }
+          }
+        },
+        orderBy: { createdAt: "desc" },
+        skip: (query.page - 1) * query.pageSize,
+        take: query.pageSize
+      }),
+      prisma.schoolMembership.count({ where })
+    ]);
+    return paginated(res, rows.map(serializeParentMembership), query.page, query.pageSize, total);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/parents", async (req, res, next) => {
+  try {
+    const schoolId = requireSchool(req, res);
+    if (!schoolId) return;
+    const data = parentCreateSchema.parse(req.body);
+    const role = await prisma.role.findUnique({ where: { code: "PARENT" } });
+    if (!role) return fail(res, 500, "VALIDATION_ERROR", "Parent role is not configured.");
+    if (data.studentId) {
+      const student = await prisma.studentProfile.findFirst({ where: { id: data.studentId, schoolId } });
+      if (!student) return fail(res, 404, "NOT_FOUND", "Student not found for this school.");
+    }
+    const row = await prisma.$transaction(async (tx) => {
+      const passwordHash = await bcrypt.hash(crypto.randomBytes(24).toString("base64url"), 12);
+      const user = await tx.user.upsert({
+        where: { email: data.email },
+        update: { name: data.name, isActive: data.loginEnabled },
+        create: { email: data.email, name: data.name, passwordHash, isActive: data.loginEnabled }
+      });
+      const membership = await tx.schoolMembership.upsert({
+        where: { userId_schoolId_roleId: { userId: user.id, schoolId, roleId: role.id } },
+        update: { status: data.loginEnabled ? "ACTIVE" : "INVITED" },
+        create: { userId: user.id, schoolId, roleId: role.id, status: data.loginEnabled ? "ACTIVE" : "INVITED" }
+      });
+      if (data.studentId) {
+        await tx.guardianStudentLink.upsert({
+          where: { schoolId_parentUserId_studentId: { schoolId, parentUserId: user.id, studentId: data.studentId } },
+          update: { relationType: data.relationType, isEmergencyContact: data.isEmergencyContact, canLogin: data.loginEnabled, status: "ACTIVE" },
+          create: { schoolId, parentUserId: user.id, studentId: data.studentId, relationType: data.relationType, isEmergencyContact: data.isEmergencyContact, canLogin: data.loginEnabled }
+        });
+      }
+      return tx.schoolMembership.findUniqueOrThrow({
+        where: { id: membership.id },
+        include: { user: { select: { id: true, name: true, email: true, isActive: true, guardianStudentLinks: { where: { schoolId }, include: { student: { select: { id: true, admissionNumber: true, name: true, className: true, status: true } } } } } } }
+      });
+    });
+    await writeAudit(req, "CREATE", "parents", row.userId, { email: data.email, studentId: data.studentId ?? null });
+    return ok(res, serializeParentMembership(row), 201);
+  } catch (error) {
+    if (isUniqueError(error)) return fail(res, 409, "CONFLICT", "A parent account with this email or link already exists.");
+    next(error);
+  }
+});
+
+router.post("/parents/:parentId/link-child", async (req, res, next) => {
+  try {
+    const schoolId = requireSchool(req, res);
+    if (!schoolId) return;
+    const parentId = routeParam(req, "parentId");
+    const data = parentLinkSchema.parse(req.body);
+    const [membership, student] = await Promise.all([
+      prisma.schoolMembership.findFirst({ where: { schoolId, userId: parentId, role: { code: "PARENT" } } }),
+      prisma.studentProfile.findFirst({ where: { schoolId, id: data.studentId } })
+    ]);
+    if (!membership) return fail(res, 404, "NOT_FOUND", "Parent account not found for this school.");
+    if (!student) return fail(res, 404, "NOT_FOUND", "Student not found for this school.");
+    const row = await prisma.guardianStudentLink.upsert({
+      where: { schoolId_parentUserId_studentId: { schoolId, parentUserId: parentId, studentId: data.studentId } },
+      update: { relationType: data.relationType, isEmergencyContact: data.isEmergencyContact, canLogin: data.canLogin, status: data.status },
+      create: { schoolId, parentUserId: parentId, studentId: data.studentId, relationType: data.relationType, isEmergencyContact: data.isEmergencyContact, canLogin: data.canLogin, status: data.status },
+      include: { student: { select: { id: true, admissionNumber: true, name: true, className: true, status: true } } }
+    });
+    await writeAudit(req, "CREATE", "guardian-student-links", row.id, { parentId, studentId: data.studentId });
+    return ok(res, row, 201);
+  } catch (error) {
+    if (isUniqueError(error)) return fail(res, 409, "CONFLICT", "This child is already linked to the parent.");
+    next(error);
+  }
+});
+
+router.patch("/parents/:parentId/login-status", async (req, res, next) => {
+  try {
+    const schoolId = requireSchool(req, res);
+    if (!schoolId) return;
+    const parentId = routeParam(req, "parentId");
+    const data = parentLoginStatusSchema.parse(req.body);
+    const membership = await prisma.schoolMembership.findFirst({ where: { schoolId, userId: parentId, role: { code: "PARENT" } } });
+    if (!membership) return fail(res, 404, "NOT_FOUND", "Parent account not found for this school.");
+    await prisma.$transaction([
+      prisma.user.update({ where: { id: parentId }, data: { isActive: data.loginEnabled } }),
+      prisma.schoolMembership.update({ where: { id: membership.id }, data: { status: data.loginEnabled ? "ACTIVE" : "SUSPENDED" } }),
+      prisma.guardianStudentLink.updateMany({ where: { schoolId, parentUserId: parentId }, data: { canLogin: data.loginEnabled } })
+    ]);
+    await writeAudit(req, "UPDATE", "parents", parentId, { loginEnabled: data.loginEnabled });
+    return ok(res, { parentId, loginEnabled: data.loginEnabled });
+  } catch (error) {
+    next(error);
+  }
+});
 router.get("/:resource", async (req, res, next) => {
   try {
     const resource = parseResource(req, res);
@@ -223,7 +395,7 @@ router.get("/:resource", async (req, res, next) => {
     const delegate = prisma[modelByResource[resource]] as any;
     const where = buildWhere(resource, schoolId, query.search, query.status);
     const [rows, total] = await Promise.all([
-      delegate.findMany({ where, orderBy: { createdAt: "desc" }, skip: (query.page - 1) * query.pageSize, take: query.pageSize }),
+      delegate.findMany({ where, ...includeFor(resource), orderBy: { createdAt: "desc" }, skip: (query.page - 1) * query.pageSize, take: query.pageSize }),
       delegate.count({ where })
     ]);
     if (query.format === "csv") {
@@ -243,6 +415,8 @@ router.post("/:resource", async (req, res, next) => {
     if (!resource || !schoolId) return;
     const delegate = prisma[modelByResource[resource]] as any;
     const data = schemas[resource].parse(req.body);
+    const guard = await validateSchoolReferences(resource, schoolId, data);
+    if (guard) return guard(res);
     const row = await delegate.create({ data: { ...data, schoolId } });
     await writeAudit(req, "CREATE", resource, row.id, data as Record<string, unknown>);
     return ok(res, row, 201);
@@ -260,6 +434,8 @@ router.patch("/:resource/:id", async (req, res, next) => {
     const delegate = prisma[modelByResource[resource]] as any;
     const data = schemas[resource].partial().parse(req.body);
     await ensureOwnRecord(delegate, routeId(req), schoolId);
+    const guard = await validateSchoolReferences(resource, schoolId, data);
+    if (guard) return guard(res);
     const row = await delegate.update({ where: { id: routeId(req) }, data });
     await writeAudit(req, "UPDATE", resource, row.id, data as Record<string, unknown>);
     return ok(res, row);
@@ -290,6 +466,25 @@ function leaveRequestInclude() {
     requestedBy: { select: { id: true, name: true, email: true } },
     reviewer: { select: { id: true, name: true, email: true } },
     timeline: { include: { actor: { select: { id: true, name: true, email: true } } }, orderBy: { createdAt: "asc" } }
+  };
+}
+
+function serializeParentMembership(row: any) {
+  return {
+    id: row.user.id,
+    membershipId: row.id,
+    name: row.user.name,
+    email: row.user.email,
+    loginEnabled: Boolean(row.user.isActive && row.status === "ACTIVE"),
+    membershipStatus: row.status,
+    links: Array.isArray(row.user.guardianStudentLinks) ? row.user.guardianStudentLinks.map((link: any) => ({
+      id: link.id,
+      relationType: link.relationType,
+      isEmergencyContact: link.isEmergencyContact,
+      canLogin: link.canLogin,
+      status: link.status,
+      student: link.student ?? null
+    })) : []
   };
 }
 
@@ -372,10 +567,46 @@ function buildWhere(resource: Resource, schoolId: string, search?: string, statu
     exams: ["name", "subject"],
     attendance: ["personName", "personType"],
     library: ["title", "author", "isbn"],
-    timetable: ["className", "subject", "teacher", "dayOfWeek"]
+    timetable: ["className", "subject", "teacher", "dayOfWeek"],
+    "teacher-assignments": ["status"]
   };
   where.OR = searchFields[resource].map((field) => ({ [field]: { contains: search, mode: "insensitive" } }));
   return where;
+}
+
+function includeFor(resource: Resource) {
+  if (resource === "sections") return { include: { class: { select: { id: true, name: true, code: true } } } };
+  if (resource === "teacher-assignments") {
+    return {
+      include: {
+        teacher: { select: { id: true, employeeNumber: true, name: true, email: true } },
+        class: { select: { id: true, name: true, code: true } },
+        section: { select: { id: true, name: true } },
+        subject: { select: { id: true, name: true, code: true } }
+      }
+    };
+  }
+  return {};
+}
+
+async function validateSchoolReferences(resource: Resource, schoolId: string, data: Record<string, unknown>) {
+  if (resource === "sections" && typeof data.classId === "string") {
+    const found = await prisma.classLevel.findFirst({ where: { id: data.classId, schoolId } });
+    if (!found) return (res: Response) => fail(res, 404, "NOT_FOUND", "Class not found for this school.");
+  }
+  if (resource === "teacher-assignments") {
+    const [teacher, classLevel, subject, section] = await Promise.all([
+      typeof data.teacherId === "string" ? prisma.teacherProfile.findFirst({ where: { id: data.teacherId, schoolId } }) : Promise.resolve(true),
+      typeof data.classId === "string" ? prisma.classLevel.findFirst({ where: { id: data.classId, schoolId } }) : Promise.resolve(true),
+      typeof data.subjectId === "string" ? prisma.subject.findFirst({ where: { id: data.subjectId, schoolId } }) : Promise.resolve(true),
+      typeof data.sectionId === "string" ? prisma.section.findFirst({ where: { id: data.sectionId, schoolId, ...(typeof data.classId === "string" ? { classId: data.classId } : {}) } }) : Promise.resolve(true)
+    ]);
+    if (!teacher) return (res: Response) => fail(res, 404, "NOT_FOUND", "Teacher not found for this school.");
+    if (!classLevel) return (res: Response) => fail(res, 404, "NOT_FOUND", "Class not found for this school.");
+    if (!subject) return (res: Response) => fail(res, 404, "NOT_FOUND", "Subject not found for this school.");
+    if (!section) return (res: Response) => fail(res, 404, "NOT_FOUND", "Section not found for this school/class.");
+  }
+  return null;
 }
 
 async function ensureOwnRecord(delegate: any, id: string, schoolId: string) {
@@ -403,6 +634,11 @@ function escapeCsv(value: unknown) {
 
 function routeId(req: Request) {
   return Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+}
+
+function routeParam(req: Request, key: string) {
+  const value = req.params[key];
+  return Array.isArray(value) ? value[0] : value;
 }
 
 function isUniqueError(error: unknown) {
