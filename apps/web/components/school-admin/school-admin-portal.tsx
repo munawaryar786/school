@@ -1578,7 +1578,12 @@ function readinessCountFor(moduleId: ModuleId, readiness: ReadinessData | null) 
 }
 
 async function api(path: string, init?: RequestInit) {
-  const response = await fetch(`/api/school-admin/${path}`, { headers: { "content-type": "application/json" }, ...init });
+  const response = await fetch(`/api/school-admin/${path}`, {
+    credentials: "same-origin",
+    cache: "no-store",
+    ...init,
+    headers: { "content-type": "application/json", ...(init?.headers ?? {}) }
+  });
   const contentType = response.headers.get("content-type") ?? "";
   const payload = contentType.includes("application/json") ? await response.json() : await response.text();
   if (!response.ok || payload.success === false) throw new Error(friendlySchoolAdminError(path, payload.error?.message ?? "Request failed."));
@@ -1587,11 +1592,16 @@ async function api(path: string, init?: RequestInit) {
 
 function friendlySchoolAdminError(path: string, message: string) {
   const lower = message.toLowerCase();
+  if (lower.includes("authentication is required") || lower.includes("authentication_required")) {
+    return "Please log in again to continue.";
+  }
   if (lower.includes("school admin resource not found")) {
+    if (path.startsWith("admissions")) return "Admissions API is unavailable. Retry after deployment.";
     if (path.startsWith("parents")) return "Parent management API is unavailable. Retry after deployment.";
     return "The selected school resource could not be loaded.";
   }
   if (lower.includes("route not found")) {
+    if (path.startsWith("admissions")) return "Admissions API is unavailable. Retry after deployment.";
     if (path.includes("link-child")) return "This child could not be linked. Confirm the student and parent belong to this school.";
     if (path.startsWith("parents")) return "Parent management API is unavailable. Retry after deployment.";
     return "The selected school resource could not be loaded.";
