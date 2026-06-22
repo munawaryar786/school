@@ -846,16 +846,6 @@ function TeacherAssignments({ refreshKey, onChanged }: { refreshKey: number; onC
   const { rows: sections } = useResourceList("sections", refreshKey);
   const { rows: subjects } = useResourceList("subjects", refreshKey);
   const classRows = teacherAssignmentClassRows(classes, sections);
-  const dynamicConfig = {
-    ...config,
-    fields: config.fields.map((field) => {
-      if (field.name === "teacherId") return { ...field, options: [{ value: "", label: "Select teacher" }, ...teachers.map((row) => ({ value: row.id, label: row.name ?? row.email ?? row.id }))] };
-      if (field.name === "classId") return { ...field, options: [{ value: "", label: "Select class" }, ...classRows.map((row) => ({ value: row.id, label: optionLabelForClass(row) }))] };
-      if (field.name === "sectionId") return { ...field, options: [{ value: "", label: "All sections" }, ...sections.map((row) => ({ value: row.id, label: optionLabelForSection(row) }))] };
-      if (field.name === "subjectId") return { ...field, options: [{ value: "", label: "Select subject" }, ...subjects.map((row) => ({ value: row.id, label: optionLabelForSubject(row) }))] };
-      return field;
-    })
-  };
 
   return (
     <div className="space-y-4">
@@ -863,7 +853,14 @@ function TeacherAssignments({ refreshKey, onChanged }: { refreshKey: number; onC
       {subjects.length === 0 ? <StatePanel text="Create subjects before assigning teachers. The subject dropdown uses real subject records only." compact /> : null}
       {sections.length === 0 ? <StatePanel text="Create sections before assigning section-specific teachers. You can still use All sections." compact /> : null}
       <section className="grid gap-4 xl:grid-cols-[380px_1fr]">
-        <ResourceForm config={dynamicConfig} editing={editing} onCancel={() => setEditing(null)} onSaved={(row) => {
+        <TeacherAssignmentForm
+          editing={editing}
+          teachers={teachers}
+          classes={classes}
+          sections={sections}
+          subjects={subjects}
+          onCancel={() => setEditing(null)}
+          onSaved={(row) => {
           setRows((current) => editing ? current.map((item) => item.id === row.id ? row : item) : [row, ...current]);
           setEditing(null);
           onChanged();
@@ -872,6 +869,127 @@ function TeacherAssignments({ refreshKey, onChanged }: { refreshKey: number; onC
         <ResourceTable config={config} rows={rows} loading={loading} error={error} onRetry={refresh} onEdit={setEditing} />
       </section>
     </div>
+  );
+}
+
+function TeacherAssignmentForm({ editing, teachers, classes, sections, subjects, onCancel, onSaved }: { editing: ResourceRow | null; teachers: ResourceRow[]; classes: ResourceRow[]; sections: ResourceRow[]; subjects: ResourceRow[]; onCancel: () => void; onSaved: (row: ResourceRow) => void }) {
+  const [teacherId, setTeacherId] = useState("");
+  const [classId, setClassId] = useState("");
+  const [sectionId, setSectionId] = useState("");
+  const [subjectId, setSubjectId] = useState("");
+  const [status, setStatus] = useState("ACTIVE");
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
+  const classRows = teacherAssignmentClassRows(classes, sections);
+  const classIds = new Set(classRows.map((row) => row.id));
+  const filteredSections = classId ? sections.filter((section) => teacherAssignmentSectionClassId(section) === classId) : sections;
+
+  useEffect(() => {
+    setTeacherId(editing?.teacherId ?? editing?.teacher?.id ?? "");
+    setClassId(editing?.classId ?? editing?.class?.id ?? "");
+    setSectionId(editing?.sectionId ?? editing?.section?.id ?? "");
+    setSubjectId(editing?.subjectId ?? editing?.subject?.id ?? "");
+    setStatus(editing?.status ?? "ACTIVE");
+    setMessage(null);
+  }, [editing]);
+
+  function changeSection(nextSectionId: string) {
+    setSectionId(nextSectionId);
+    if (!classId && nextSectionId) {
+      const inferredClassId = teacherAssignmentSectionClassId(sections.find((section) => section.id === nextSectionId));
+      if (inferredClassId && classIds.has(inferredClassId)) {
+        setClassId(inferredClassId);
+      }
+    }
+  }
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setMessage(null);
+    const inferredClassId = classId || teacherAssignmentSectionClassId(sections.find((section) => section.id === sectionId));
+    if (!teacherId) {
+      setMessage({ tone: "error", text: "Select a teacher before saving the assignment." });
+      return;
+    }
+    if (!inferredClassId) {
+      setMessage({ tone: "error", text: "Select a class before saving the assignment." });
+      return;
+    }
+    if (!subjectId) {
+      setMessage({ tone: "error", text: "Select a subject before saving the assignment." });
+      return;
+    }
+    setSaving(true);
+    try {
+      const payload: ApiOne<ResourceRow> = await api(editing ? `teacher-assignments/${editing.id}` : "teacher-assignments", {
+        method: editing ? "PATCH" : "POST",
+        body: JSON.stringify({ teacherId, classId: inferredClassId, ...(sectionId ? { sectionId } : {}), subjectId, status })
+      });
+      setClassId(inferredClassId);
+      setMessage({ tone: "success", text: classId ? "Teacher assignment saved." : "Teacher assignment saved. Class was inferred from the selected section." });
+      onSaved(payload.data);
+    } catch (caught) {
+      setMessage({ tone: "error", text: caught instanceof Error ? caught.message : "Teacher assignment could not be saved." });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form className="rounded-lg border border-border bg-surface p-4 shadow-panel" onSubmit={submit}>
+      <div className="border-b border-border pb-3">
+        <h3 className="text-base font-semibold">{editing ? "Edit Teacher Assignment" : "Save assignment"}</h3>
+        <p className="mt-1 text-sm text-muted-foreground">Uses real teacher, class, section, and subject records only.</p>
+      </div>
+      <div className="mt-4 grid grid-cols-2 gap-2 text-xs text-muted-foreground">
+        <span className="rounded-md border border-border bg-background px-2 py-1">Classes loaded: {formatNumber(classRows.length)}</span>
+        <span className="rounded-md border border-border bg-background px-2 py-1">Sections loaded: {formatNumber(sections.length)}</span>
+        <span className="rounded-md border border-border bg-background px-2 py-1">Subjects loaded: {formatNumber(subjects.length)}</span>
+        <span className="rounded-md border border-border bg-background px-2 py-1">Teachers loaded: {formatNumber(teachers.length)}</span>
+      </div>
+      {message ? <div className={`mt-4 rounded-md border p-3 text-sm ${message.tone === "success" ? "border-success/30 bg-success/10 text-success" : "border-error/30 bg-error/10 text-error"}`}>{message.text}</div> : null}
+      {classRows.length === 0 ? <StatePanel text="Classes could not be loaded. Open Classes and create missing 1-12, then refresh." compact /> : null}
+      <div className="mt-4 grid gap-3">
+        <label className="grid gap-1 text-sm font-medium">
+          Teacher
+          <select className="min-h-10 rounded-md border border-border bg-background px-3 text-sm" required value={teacherId} onChange={(event) => setTeacherId(event.target.value)}>
+            <option value="">Select teacher</option>
+            {teachers.map((row) => <option key={row.id} value={row.id}>{row.name ?? row.email ?? row.id}</option>)}
+          </select>
+        </label>
+        <label className="grid gap-1 text-sm font-medium">
+          Class
+          <select className="min-h-10 rounded-md border border-border bg-background px-3 text-sm" required value={classId} onChange={(event) => { setClassId(event.target.value); if (sectionId && teacherAssignmentSectionClassId(sections.find((section) => section.id === sectionId)) !== event.target.value) setSectionId(""); }}>
+            <option value="">Select class</option>
+            {classRows.map((row, index) => <option key={row.id} value={row.id}>{optionLabelForClass(row, index)}</option>)}
+          </select>
+        </label>
+        <label className="grid gap-1 text-sm font-medium">
+          Section
+          <select className="min-h-10 rounded-md border border-border bg-background px-3 text-sm" value={sectionId} onChange={(event) => changeSection(event.target.value)}>
+            <option value="">All sections</option>
+            {filteredSections.map((row) => <option key={row.id} value={row.id}>{optionLabelForSection(row)}</option>)}
+          </select>
+        </label>
+        <label className="grid gap-1 text-sm font-medium">
+          Subject
+          <select className="min-h-10 rounded-md border border-border bg-background px-3 text-sm" required value={subjectId} onChange={(event) => setSubjectId(event.target.value)}>
+            <option value="">Select subject</option>
+            {subjects.map((row) => <option key={row.id} value={row.id}>{optionLabelForSubject(row)}</option>)}
+          </select>
+        </label>
+        <label className="grid gap-1 text-sm font-medium">
+          Status
+          <select className="min-h-10 rounded-md border border-border bg-background px-3 text-sm" value={status} onChange={(event) => setStatus(event.target.value)}>
+            {statusOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </select>
+        </label>
+      </div>
+      <div className="mt-4 flex flex-wrap gap-2">
+        <button className="inline-flex min-h-10 items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-60" type="submit" disabled={saving}>{saving ? "Saving..." : "Save assignment"}</button>
+        {editing ? <button className="inline-flex min-h-10 items-center justify-center rounded-md border border-border bg-background px-4 text-sm font-medium" type="button" onClick={onCancel}>Cancel edit</button> : null}
+      </div>
+    </form>
   );
 }
 
@@ -1044,8 +1162,8 @@ function shortDate(value: string) {
   return Number.isNaN(date.getTime()) ? "Not available" : new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(date);
 }
 
-function optionLabelForClass(row: ResourceRow) {
-  const name = row.name ?? row.title ?? row.className ?? row.gradeName ?? row.code ?? row.id;
+function optionLabelForClass(row: ResourceRow, index = 0) {
+  const name = row.name ?? row.title ?? row.className ?? row.gradeName ?? row.code ?? `Class ${index + 1}`;
   const code = row.code ? ` (${row.code})` : "";
   const status = row.status ? ` - ${humanize(row.status)}` : "";
   return `${name}${code}${status}`;
@@ -1053,25 +1171,55 @@ function optionLabelForClass(row: ResourceRow) {
 
 function teacherAssignmentClassRows(classes: ResourceRow[], sections: ResourceRow[]) {
   const byId = new Map<string, ResourceRow>();
-  classes.forEach((row) => {
-    if (row.id) byId.set(row.id, row);
+  classes.forEach((row, index) => {
+    const normalized = normalizeTeacherAssignmentClass(row, index);
+    if (normalized?.id) byId.set(normalized.id, normalized);
   });
-  sections.forEach((section) => {
-    const relatedClass = section.class;
-    if (relatedClass?.id && !byId.has(relatedClass.id)) {
-      byId.set(relatedClass.id, {
-        id: relatedClass.id,
-        name: relatedClass.name,
-        code: relatedClass.code,
-        status: relatedClass.status ?? section.status
-      });
+  sections.forEach((section, index) => {
+    const normalized = normalizeTeacherAssignmentClassFromSection(section, index);
+    if (normalized?.id && !byId.has(normalized.id)) {
+      byId.set(normalized.id, normalized);
     }
   });
   return Array.from(byId.values()).sort((left, right) => optionLabelForClass(left).localeCompare(optionLabelForClass(right), undefined, { numeric: true }));
 }
 
+function normalizeTeacherAssignmentClass(row: any, index = 0): ResourceRow | null {
+  if (!row?.id) return null;
+  return {
+    id: String(row.id),
+    name: row.name ?? row.title ?? row.className ?? row.gradeName ?? `Class ${index + 1}`,
+    title: row.title,
+    className: row.className,
+    gradeName: row.gradeName,
+    code: row.code,
+    status: row.status
+  };
+}
+
+function normalizeTeacherAssignmentClassFromSection(section: any, index = 0): ResourceRow | null {
+  const relatedClass = section?.class ?? section?.classLevel ?? section?.classInfo ?? section?.classRecord;
+  const id = relatedClass?.id ?? section?.classId;
+  if (!id) return null;
+  return {
+    id: String(id),
+    name: relatedClass?.name ?? relatedClass?.title ?? relatedClass?.className ?? relatedClass?.gradeName ?? section?.className ?? `Class ${index + 1}`,
+    title: relatedClass?.title,
+    className: relatedClass?.className ?? section?.className,
+    gradeName: relatedClass?.gradeName,
+    code: relatedClass?.code ?? section?.classCode,
+    status: relatedClass?.status ?? section?.classStatus
+  };
+}
+
+function teacherAssignmentSectionClassId(section: any) {
+  const relatedClass = section?.class ?? section?.classLevel ?? section?.classInfo ?? section?.classRecord;
+  return relatedClass?.id ?? section?.classId ?? "";
+}
+
 function optionLabelForSection(row: ResourceRow) {
-  const className = row.class?.name ?? row.className ?? row.class?.code ?? "Class";
+  const relatedClass = row.class ?? row.classLevel ?? row.classInfo ?? row.classRecord;
+  const className = relatedClass?.name ?? row.className ?? relatedClass?.code ?? "Class";
   const sectionName = row.name ?? row.title ?? row.id;
   const status = row.status ? ` - ${humanize(row.status)}` : "";
   return `${className} / ${sectionName}${status}`;
