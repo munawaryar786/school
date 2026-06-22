@@ -43,6 +43,14 @@ type LeaveRequest = {
   updatedAt: string;
   timeline?: Array<{ id: string; action: string; note?: string | null; createdAt: string; actor?: { name?: string | null; email?: string | null } | null }> | null;
 };
+type AttendanceRecord = {
+  id: string;
+  studentName: string;
+  className: string;
+  attendanceDate: string;
+  status: string;
+  remarks?: string | null;
+};
 
 type LeaveForm = {
   type: string;
@@ -81,6 +89,7 @@ export function ParentPortal() {
   const [selectedChildId, setSelectedChildId] = useState<string | null>(null);
   const [summary, setSummary] = useState<ChildSummary | null>(null);
   const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>([]);
+  const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>([]);
   const [form, setForm] = useState<LeaveForm>(emptyForm);
   const [loading, setLoading] = useState(true);
   const [childLoading, setChildLoading] = useState(false);
@@ -106,17 +115,20 @@ export function ParentPortal() {
     if (!selectedChildId) {
       setSummary(null);
       setLeaveRequests([]);
+      setAttendanceRecords([]);
       return;
     }
     setChildLoading(true);
     setError(null);
     Promise.all([
       api<ChildSummary>(`children/${selectedChildId}/summary`),
-      api<LeaveRequest[]>(`children/${selectedChildId}/leave-requests`)
+      api<LeaveRequest[]>(`children/${selectedChildId}/leave-requests`),
+      api<AttendanceRecord[]>("attendance?pageSize=100")
     ])
-      .then(([nextSummary, nextRequests]) => {
+      .then(([nextSummary, nextRequests, nextAttendance]) => {
         setSummary(nextSummary ?? null);
         setLeaveRequests(Array.isArray(nextRequests) ? nextRequests : []);
+        setAttendanceRecords(Array.isArray(nextAttendance) ? nextAttendance.filter((row) => row.studentName === nextSummary?.child?.name).slice(0, 10) : []);
       })
       .catch((caught) => setError(caught instanceof Error ? caught.message : "Child dashboard could not load."))
       .finally(() => setChildLoading(false));
@@ -195,6 +207,8 @@ export function ParentPortal() {
             <LeaveRequestList requests={leaveRequests} />
           </section>
 
+          <AttendanceRecords records={attendanceRecords} />
+
           <section className="rounded-lg border border-border bg-surface p-4 shadow-panel">
             <div className="flex items-center gap-2">
               <Library aria-hidden={true} className="text-primary" size={18} />
@@ -205,6 +219,28 @@ export function ParentPortal() {
         </>
       )}
     </div>
+  );
+}
+
+function AttendanceRecords({ records }: { records: AttendanceRecord[] }) {
+  return (
+    <section className="rounded-lg border border-border bg-surface p-4 shadow-panel">
+      <div className="flex items-center gap-2">
+        <CalendarCheck aria-hidden={true} className="text-primary" size={18} />
+        <h2 className="text-base font-semibold">Recent Attendance</h2>
+      </div>
+      {records.length === 0 ? <StatePanel text="No attendance has been marked for this child yet." compact /> : (
+        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {records.map((record) => (
+            <article key={record.id} className="rounded-md border border-border bg-background p-3 text-sm">
+              <p className="font-semibold">{humanize(record.status)}</p>
+              <p className="mt-1 text-muted-foreground">{formatDate(record.attendanceDate)} - {record.className}</p>
+              {record.remarks ? <p className="mt-2 text-muted-foreground">{record.remarks}</p> : null}
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -368,7 +404,12 @@ function buildAttentionItems(summary: ChildSummary | null, requests: LeaveReques
 }
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`/api/parent/${path}`, { headers: { "content-type": "application/json" }, ...init });
+  const response = await fetch(`/api/parent/${path}`, {
+    credentials: "same-origin",
+    cache: "no-store",
+    ...init,
+    headers: { "content-type": "application/json", ...(init?.headers ?? {}) }
+  });
   const contentType = response.headers.get("content-type") ?? "";
   const payload = contentType.includes("application/json") ? await response.json() : await response.text();
   if (!response.ok || payload.success === false) throw new Error(payload.error?.message ?? "Request failed.");

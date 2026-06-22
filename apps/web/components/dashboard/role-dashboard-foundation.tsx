@@ -26,6 +26,13 @@ type IconType = React.ComponentType<{ size?: number; "aria-hidden"?: boolean; cl
 type Row = Record<string, unknown>;
 type ApiOne<T> = { success: true; data: T };
 type ModuleStatus = "Ready" | "Setup Required" | "Preview" | "Locked" | "Coming Later";
+type TeacherAttendanceContext = {
+  profile?: Row | null;
+  assignments?: Array<{ id: string; classId: string; sectionId?: string | null; class?: Row | null; section?: Row | null; subject?: Row | null }>;
+  classes?: Row[];
+  message?: string;
+};
+type TeacherAttendanceStudent = Row & { name: string; suggestedStatus?: string; attendance?: Row | null; approvedLeave?: Row | null };
 
 type MetricConfig = {
   key: string;
@@ -271,9 +278,144 @@ export function RoleDashboardFoundation({ kind }: { kind: keyof typeof configs }
               ))}
             </div>
           </section>
+
+          {kind === "teacher" ? <TeacherAttendanceManager /> : null}
+          {kind === "student" ? <StudentAttendancePanel /> : null}
         </>
       )}
     </div>
+  );
+}
+
+function TeacherAttendanceManager() {
+  const today = new Date().toISOString().slice(0, 10);
+  const [context, setContext] = useState<TeacherAttendanceContext | null>(null);
+  const [classId, setClassId] = useState("");
+  const [sectionId, setSectionId] = useState("");
+  const [date, setDate] = useState(today);
+  const [students, setStudents] = useState<TeacherAttendanceStudent[]>([]);
+  const [statuses, setStatuses] = useState<Record<string, string>>({});
+  const [remarks, setRemarks] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  useEffect(() => {
+    setLoading(true);
+    api("teacher", "attendance/context")
+      .then((payload: ApiOne<TeacherAttendanceContext>) => {
+        const data = payload.data ?? {};
+        setContext(data);
+        const firstClassId = String(data.assignments?.[0]?.classId ?? "");
+        setClassId((current) => current || firstClassId);
+      })
+      .catch((caught) => setMessage({ tone: "error", text: caught instanceof Error ? caught.message : "Attendance context could not load." }))
+      .finally(() => setLoading(false));
+  }, [refreshKey]);
+
+  useEffect(() => {
+    if (!classId) {
+      setStudents([]);
+      return;
+    }
+    const query = new URLSearchParams({ classId, date });
+    if (sectionId) query.set("sectionId", sectionId);
+    api("teacher", `attendance/students?${query.toString()}`)
+      .then((payload: ApiOne<{ students: TeacherAttendanceStudent[] }>) => {
+        const rows = Array.isArray(payload.data?.students) ? payload.data.students : [];
+        setStudents(rows);
+        setStatuses(Object.fromEntries(rows.map((row) => [row.name, String(row.attendance?.status ?? row.suggestedStatus ?? "PRESENT")])));
+        setRemarks(Object.fromEntries(rows.map((row) => [row.name, String(row.attendance?.remarks ?? "")])));
+      })
+      .catch((caught) => setMessage({ tone: "error", text: caught instanceof Error ? caught.message : "Students could not load for attendance." }));
+  }, [classId, sectionId, date]);
+
+  const assignments = context?.assignments ?? [];
+  const sections = assignments.filter((item) => item.classId === classId && item.section).map((item) => item.section as Row);
+
+  async function saveAttendance() {
+    setSaving(true);
+    setMessage(null);
+    try {
+      await api("teacher", "attendance/mark", {
+        method: "POST",
+        body: JSON.stringify({
+          classId,
+          sectionId: sectionId || null,
+          date,
+          records: students.map((student) => ({ studentName: student.name, status: statuses[student.name] ?? "PRESENT", remarks: remarks[student.name] || null }))
+        })
+      });
+      setMessage({ tone: "success", text: "Attendance saved." });
+      setRefreshKey((value) => value + 1);
+    } catch (caught) {
+      setMessage({ tone: "error", text: caught instanceof Error ? caught.message : "Attendance could not be saved." });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="rounded-lg border border-border bg-surface p-4 shadow-panel">
+      <div className="flex flex-col gap-2 border-b border-border pb-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="text-base font-semibold">Attendance Marking</h2>
+          <p className="mt-1 text-sm text-muted-foreground">Mark attendance only for classes assigned by School Admin.</p>
+        </div>
+        <button className="inline-flex min-h-9 items-center justify-center gap-2 rounded-md border border-border bg-background px-3 text-sm font-medium" onClick={() => setRefreshKey((value) => value + 1)} type="button"><RefreshCw aria-hidden={true} size={15} />Refresh</button>
+      </div>
+      {message ? <div className={`mt-4 rounded-md border p-3 text-sm ${message.tone === "success" ? "border-success/30 bg-success/10 text-success" : "border-error/30 bg-error/10 text-error"}`}>{message.text}</div> : null}
+      {loading ? <StatePanel text="Loading attendance setup" compact /> : assignments.length === 0 ? <StatePanel text="Ask School Admin to assign class before marking attendance." compact /> : (
+        <div className="mt-4 space-y-4">
+          <div className="grid gap-3 md:grid-cols-3">
+            <label className="grid gap-1 text-sm font-medium">Class<select className="min-h-10 rounded-md border border-border bg-background px-3 text-sm" value={classId} onChange={(event) => { setClassId(event.target.value); setSectionId(""); }}>
+              {Array.from(new Map(assignments.map((item) => [item.classId, item.class])).entries()).map(([id, row]) => <option key={id} value={id}>{stringValue((row as Row)?.name) !== "Not available" ? stringValue((row as Row).name) : id}</option>)}
+            </select></label>
+            <label className="grid gap-1 text-sm font-medium">Section<select className="min-h-10 rounded-md border border-border bg-background px-3 text-sm" value={sectionId} onChange={(event) => setSectionId(event.target.value)}>
+              <option value="">All sections</option>
+              {sections.map((row) => <option key={String(row.id)} value={String(row.id)}>{stringValue(row.name)}</option>)}
+            </select></label>
+            <label className="grid gap-1 text-sm font-medium">Date<input className="min-h-10 rounded-md border border-border bg-background px-3 text-sm" type="date" value={date} onChange={(event) => setDate(event.target.value)} /></label>
+          </div>
+          {students.length === 0 ? <StatePanel text="No students are available for the selected class." compact /> : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-border text-sm">
+                <thead className="bg-muted/40 text-left text-xs uppercase text-muted-foreground"><tr><th className="px-3 py-2">Student</th><th className="px-3 py-2">Status</th><th className="px-3 py-2">Note</th></tr></thead>
+                <tbody className="divide-y divide-border">{students.map((student) => <tr key={student.name}><td className="px-3 py-2">{student.name}{student.approvedLeave ? <span className="ml-2 rounded-md border border-warning/30 bg-warning/10 px-2 py-1 text-xs text-warning">Approved leave</span> : null}</td><td className="px-3 py-2"><select className="min-h-9 rounded-md border border-border bg-background px-2 text-sm" value={statuses[student.name] ?? "PRESENT"} onChange={(event) => setStatuses((current) => ({ ...current, [student.name]: event.target.value }))}>{["PRESENT", "ABSENT", "LATE", "HALF_DAY", "EXCUSED"].map((status) => <option key={status} value={status}>{status.replaceAll("_", " ")}</option>)}</select></td><td className="px-3 py-2"><input className="min-h-9 rounded-md border border-border bg-background px-2 text-sm" value={remarks[student.name] ?? ""} onChange={(event) => setRemarks((current) => ({ ...current, [student.name]: event.target.value }))} /></td></tr>)}</tbody>
+              </table>
+            </div>
+          )}
+          <button className="inline-flex min-h-10 items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-60" disabled={saving || students.length === 0} onClick={saveAttendance} type="button">{saving ? "Saving..." : "Save attendance"}</button>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function StudentAttendancePanel() {
+  const [records, setRecords] = useState<Row[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    setLoading(true);
+    api("student", "attendance?pageSize=10")
+      .then((payload: ApiOne<Row[]> | { success: true; data: Row[] }) => setRecords(Array.isArray(payload.data) ? payload.data : []))
+      .catch((caught) => setError(caught instanceof Error ? caught.message : "Attendance could not load."))
+      .finally(() => setLoading(false));
+  }, []);
+  const present = records.filter((row) => row.status === "PRESENT").length;
+  const attendanceRate = records.length === 0 ? null : Math.round((present / records.length) * 100);
+  return (
+    <section className="rounded-lg border border-border bg-surface p-4 shadow-panel">
+      <h2 className="text-base font-semibold">My Attendance</h2>
+      {loading ? <StatePanel text="Loading attendance" compact /> : error ? <StatePanel text={error} tone="error" compact /> : records.length === 0 ? <StatePanel text="No attendance has been marked yet." compact /> : (
+        <div className="mt-4 space-y-3">
+          <p className="text-sm text-muted-foreground">Attendance rate: {attendanceRate == null ? "No data" : `${formatNumber(attendanceRate)}%`}</p>
+          {records.slice(0, 8).map((row) => <div key={String(row.id)} className="rounded-md border border-border bg-background p-3 text-sm"><p className="font-medium">{stringValue(row.status).replaceAll("_", " ")}</p><p className="text-muted-foreground">{formatDate(String(row.attendanceDate))} - {stringValue(row.className)}</p></div>)}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -391,8 +533,13 @@ function useDashboard(endpoint: string) {
   return { data, loading, error, retry: () => setRefreshKey((value) => value + 1) };
 }
 
-async function api(endpoint: string, path: string) {
-  const response = await fetch(`/api/${endpoint}/${path}`, { headers: { "content-type": "application/json" } });
+async function api(endpoint: string, path: string, init?: RequestInit) {
+  const response = await fetch(`/api/${endpoint}/${path}`, {
+    credentials: "same-origin",
+    cache: "no-store",
+    ...init,
+    headers: { "content-type": "application/json", ...(init?.headers ?? {}) }
+  });
   const contentType = response.headers.get("content-type") ?? "";
   const payload = contentType.includes("application/json") ? await response.json() : await response.text();
   if (!response.ok || payload.success === false) throw new Error(payload.error?.message ?? "Request failed.");
@@ -458,6 +605,11 @@ function formatNumber(value: number | null | undefined) {
 function formatCurrency(value: number | null | undefined) {
   const amount = typeof value === "number" && Number.isFinite(value) ? value : 0;
   return new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(amount);
+}
+
+function formatDate(value: string) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "Not available" : new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(date);
 }
 
 function stringValue(value: unknown) {

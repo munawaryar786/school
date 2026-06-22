@@ -87,6 +87,8 @@ const schemas = {
   })
 } as const;
 
+const attendanceStatuses = new Set(["PRESENT", "ABSENT", "LATE", "HALF_DAY", "EXCUSED"]);
+
 type Resource = keyof typeof schemas;
 
 const modelByResource: Record<Resource, keyof typeof prisma> = {
@@ -141,6 +143,112 @@ router.get("/dashboard", async (req, res, next) => {
       profile: assignmentScope.profile
     });
   } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/attendance/context", async (req, res, next) => {
+  try {
+    const scope = requireTeacherScope(req, res);
+    if (!scope) return;
+    const assignmentScope = await findTeacherAssignmentScope(scope.schoolId, scope.teacherId);
+    if (!assignmentScope.profile) {
+      return ok(res, { profile: null, assignments: [], classes: [], message: "Ask School Admin to assign class before marking attendance." });
+    }
+    const rows = await (prisma as any).teacherSubjectAssignment.findMany({
+      where: { schoolId: scope.schoolId, teacherId: assignmentScope.profile.id, status: "ACTIVE" },
+      include: {
+        class: { select: { id: true, name: true, code: true, status: true } },
+        section: { select: { id: true, name: true, status: true } },
+        subject: { select: { id: true, name: true, code: true, status: true } }
+      },
+      orderBy: { createdAt: "desc" }
+    });
+    const classes = Array.from(new Map(rows.map((row: any) => [row.classId, row.class])).values()).filter(Boolean);
+    return ok(res, { profile: assignmentScope.profile, assignments: rows.map(serializeTeacherAssignmentScope), classes });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/attendance/students", async (req, res, next) => {
+  try {
+    const scope = requireTeacherScope(req, res);
+    if (!scope) return;
+    const query = parseAttendanceStudentsQuery(req.query);
+    const assignment = await ensureTeacherAssignedClass(scope.schoolId, scope.teacherId, query.classId, query.sectionId || null);
+    if (!assignment) return fail(res, 403, "FORBIDDEN", "Teacher is not assigned to this class or section.");
+    const students = await prisma.studentProfile.findMany({
+      where: { schoolId: scope.schoolId, className: assignment.class.name, status: "ACTIVE" },
+      orderBy: { name: "asc" },
+      select: { id: true, admissionNumber: true, name: true, className: true, status: true }
+    });
+    const day = attendanceDayRange(query.date);
+    const existing = await prisma.teacherAttendance.findMany({
+      where: { schoolId: scope.schoolId, teacherId: scope.teacherId, className: assignment.class.name, attendanceDate: { gte: day.start, lt: day.end } }
+    });
+    const approvedLeaves = await (prisma as any).leaveRequest.findMany({
+      where: { schoolId: scope.schoolId, studentId: { in: students.map((student) => student.id) }, status: "APPROVED", startDate: { lte: day.start }, endDate: { gte: day.start } },
+      select: { studentId: true, type: true, reason: true }
+    });
+    const byName = new Map(existing.map((row: any) => [row.studentName, row]));
+    const leaveByStudent = new Map(approvedLeaves.map((row: any) => [row.studentId, row]));
+    return ok(res, {
+      class: assignment.class,
+      section: assignment.section ?? null,
+      subject: assignment.subject ?? null,
+      date: day.start,
+      students: students.map((student) => {
+        const attendance = byName.get(student.name);
+        const leave = leaveByStudent.get(student.id);
+        return {
+          ...student,
+          attendance: attendance ?? null,
+          approvedLeave: leave ?? null,
+          suggestedStatus: attendance?.status ?? (leave ? "EXCUSED" : "PRESENT")
+        };
+      })
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/attendance/mark", async (req, res, next) => {
+  try {
+    const scope = requireTeacherScope(req, res);
+    if (!scope) return;
+    const data = parseAttendanceMarkBody(req.body);
+    const assignment = await ensureTeacherAssignedClass(scope.schoolId, scope.teacherId, data.classId, data.sectionId || null);
+    if (!assignment) return fail(res, 403, "FORBIDDEN", "Teacher is not assigned to this class or section.");
+    const day = attendanceDayRange(data.date);
+    const students = await prisma.studentProfile.findMany({
+      where: { schoolId: scope.schoolId, className: assignment.class.name, status: "ACTIVE" },
+      select: { name: true }
+    });
+    const allowedNames = new Set(students.map((student) => student.name));
+    const invalid = data.records.find((record) => !allowedNames.has(record.studentName));
+    if (invalid) return fail(res, 403, "FORBIDDEN", "Teacher cannot mark attendance for a student outside the assigned class.");
+    const rows = await prisma.$transaction(async (tx) => {
+      const saved = [];
+      for (const record of data.records) {
+        const existing = await tx.teacherAttendance.findFirst({
+          where: { schoolId: scope.schoolId, teacherId: scope.teacherId, studentName: record.studentName, className: assignment.class.name, attendanceDate: { gte: day.start, lt: day.end } }
+        });
+        if (existing) {
+          saved.push(await tx.teacherAttendance.update({ where: { id: existing.id }, data: { status: record.status, remarks: record.remarks || null, attendanceDate: day.start } }));
+        } else {
+          saved.push(await tx.teacherAttendance.create({
+            data: { schoolId: scope.schoolId, teacherId: scope.teacherId, studentName: record.studentName, className: assignment.class.name, attendanceDate: day.start, status: record.status, remarks: record.remarks || null }
+          }));
+        }
+      }
+      return saved;
+    });
+    await writeAudit(req, "CREATE", "attendance", "bulk-mark", { classId: data.classId, sectionId: data.sectionId || null, date: day.start.toISOString(), records: rows.length });
+    return ok(res, { saved: rows.length, records: rows });
+  } catch (error) {
+    if (isPrismaError(error)) return fail(res, 409, "CONFLICT", "Attendance could not be saved.");
     next(error);
   }
 });
@@ -270,6 +378,72 @@ async function findTeacherAssignmentScope(schoolId: string, userId: string) {
     if (!isMissingTeacherAssignmentTable(error)) throw error;
   }
   return { assignmentCount, profile };
+}
+
+async function ensureTeacherAssignedClass(schoolId: string, userId: string, classId: string, sectionId: string | null) {
+  const assignmentScope = await findTeacherAssignmentScope(schoolId, userId);
+  if (!assignmentScope.profile) return null;
+  const where: any = { schoolId, teacherId: assignmentScope.profile.id, classId, status: "ACTIVE" };
+  if (sectionId) where.OR = [{ sectionId }, { sectionId: null }];
+  const assignment = await (prisma as any).teacherSubjectAssignment.findFirst({
+    where,
+    include: {
+      class: { select: { id: true, name: true, code: true, status: true } },
+      section: { select: { id: true, name: true, status: true } },
+      subject: { select: { id: true, name: true, code: true, status: true } }
+    }
+  });
+  return assignment;
+}
+
+function serializeTeacherAssignmentScope(row: any) {
+  return {
+    id: row.id,
+    classId: row.classId,
+    sectionId: row.sectionId,
+    subjectId: row.subjectId,
+    status: row.status,
+    class: row.class ?? null,
+    section: row.section ?? null,
+    subject: row.subject ?? null
+  };
+}
+
+function attendanceDayRange(value: Date) {
+  const start = new Date(value);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+  return { start, end };
+}
+
+function parseAttendanceStudentsQuery(query: any) {
+  const classId = String(query.classId ?? "").trim();
+  if (!classId) throw Object.assign(new Error("Class is required."), { statusCode: 400 });
+  const date = new Date(query.date ?? new Date());
+  if (Number.isNaN(date.getTime())) throw Object.assign(new Error("Valid attendance date is required."), { statusCode: 400 });
+  return { classId, sectionId: String(query.sectionId ?? "").trim(), date };
+}
+
+function parseAttendanceMarkBody(body: any) {
+  const classId = String(body?.classId ?? "").trim();
+  if (!classId) throw Object.assign(new Error("Class is required."), { statusCode: 400 });
+  const date = new Date(body?.date ?? new Date());
+  if (Number.isNaN(date.getTime())) throw Object.assign(new Error("Valid attendance date is required."), { statusCode: 400 });
+  const records = Array.isArray(body?.records) ? body.records : [];
+  if (records.length === 0) throw Object.assign(new Error("At least one attendance record is required."), { statusCode: 400 });
+  return {
+    classId,
+    sectionId: body?.sectionId ? String(body.sectionId).trim() : null,
+    date,
+    records: records.map((record: any) => {
+      const studentName = String(record?.studentName ?? "").trim();
+      const status = String(record?.status ?? "PRESENT").trim();
+      if (studentName.length < 2) throw Object.assign(new Error("Student name is required."), { statusCode: 400 });
+      if (!attendanceStatuses.has(status)) throw Object.assign(new Error("Invalid attendance status."), { statusCode: 400 });
+      return { studentName, status, remarks: record?.remarks ? String(record.remarks).trim().slice(0, 500) : null };
+    })
+  };
 }
 
 async function ensureOwnRecord(delegate: any, id: string, scope: { schoolId: string; teacherId: string }) {

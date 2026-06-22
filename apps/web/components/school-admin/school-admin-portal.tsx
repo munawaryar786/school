@@ -82,6 +82,11 @@ type AdmissionRow = ResourceRow & {
   notes?: string | null;
   enrollments?: Array<{ id: string; enrollmentNo?: string; studentName?: string; className?: string; status?: string; enrolledOn?: string }>;
 };
+type AttendanceSummary = {
+  total: number;
+  byStatus: Array<{ status: string; count: number }>;
+  byClass: Array<{ className: string; count: number }>;
+};
 type IconType = ComponentType<{ size?: number; "aria-hidden"?: boolean; className?: string }>;
 type ModuleStatus = "Ready" | "Setup Required" | "Preview" | "Locked" | "Coming Later";
 type FieldType = "text" | "date" | "number" | "select" | "checkbox" | "password";
@@ -122,7 +127,7 @@ const modules: ModuleConfig[] = [
   { id: "settings", label: "Settings", icon: Settings, purpose: "School profile, campuses, academic defaults, branding, and provider settings.", status: "Preview", nextAction: "Configure once settings workflow is enabled", requirements: "Needs school profile and provider configuration records." }
 ];
 
-const openedModules = new Set<ModuleId>(["academic", "classes", "sections", "subjects", "admissions", "students", "teachers", "parents"]);
+const openedModules = new Set<ModuleId>(["academic", "classes", "sections", "subjects", "admissions", "students", "teachers", "parents", "attendance"]);
 const lockedDependencyText: Partial<Record<ModuleId, string>> = {
   attendance: "Locked until academic years, classes, sections, students, and teacher assignment foundations are complete.",
   timetable: "Locked until classes, sections, subjects, and teacher assignments are available.",
@@ -335,6 +340,8 @@ export function SchoolAdminPortal() {
           <Dashboard refreshKey={refreshKey} readiness={readiness} onOpenModule={setActiveModule} />
         ) : activeModule === "admissions" ? (
           <AdmissionsWorkspace refreshKey={refreshKey} onChanged={refreshAll} />
+        ) : activeModule === "attendance" ? (
+          <AttendanceWorkspace refreshKey={refreshKey} />
         ) : openedModules.has(activeModule) ? (
           <CorePeopleWorkspace moduleId={activeModule} refreshKey={refreshKey} onChanged={refreshAll} />
         ) : (
@@ -523,6 +530,91 @@ function LeaveRequestReviewQueue() {
     </section>
   );
 }
+
+function AttendanceWorkspace({ refreshKey }: { refreshKey: number }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [date, setDate] = useState(today);
+  const [status, setStatus] = useState("");
+  const [rows, setRows] = useState<ResourceRow[]>([]);
+  const [summary, setSummary] = useState<AttendanceSummary | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [retryKey, setRetryKey] = useState(0);
+
+  useEffect(() => {
+    setLoading(true);
+    setError(null);
+    const query = new URLSearchParams({ pageSize: "100", date });
+    if (status) query.set("status", status);
+    Promise.all([
+      api(`attendance?${query.toString()}`),
+      api(`attendance/summary?${query.toString()}`)
+    ])
+      .then(([listPayload, summaryPayload]) => {
+        setRows(Array.isArray(listPayload.data) ? listPayload.data : []);
+        setSummary(summaryPayload.data ?? null);
+      })
+      .catch((caught) => setError(caught instanceof Error ? caught.message : "Attendance monitoring could not load."))
+      .finally(() => setLoading(false));
+  }, [date, status, refreshKey, retryKey]);
+
+  return (
+    <div className="space-y-5">
+      <section className="rounded-lg border border-border bg-surface p-5 shadow-panel">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <StatusBadge status="Ready" />
+            <h2 className="mt-3 text-2xl font-semibold">Attendance Monitoring</h2>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">Review teacher-marked attendance by date, class, and status from real school records.</p>
+          </div>
+          <button className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-border bg-background px-3 text-sm font-medium" onClick={() => setRetryKey((value) => value + 1)} type="button">
+            <RefreshCw aria-hidden={true} size={15} />
+            Refresh
+          </button>
+        </div>
+      </section>
+
+      <section className="rounded-lg border border-border bg-surface p-4 shadow-panel">
+        <div className="grid gap-3 md:grid-cols-3">
+          <label className="grid gap-1 text-sm font-medium">Date<input className="min-h-10 rounded-md border border-border bg-background px-3 text-sm" type="date" value={date} onChange={(event) => setDate(event.target.value)} /></label>
+          <label className="grid gap-1 text-sm font-medium">Status<select className="min-h-10 rounded-md border border-border bg-background px-3 text-sm" value={status} onChange={(event) => setStatus(event.target.value)}>
+            <option value="">All statuses</option>
+            {["PRESENT", "ABSENT", "LATE", "HALF_DAY", "EXCUSED"].map((item) => <option key={item} value={item}>{humanize(item)}</option>)}
+          </select></label>
+        </div>
+      </section>
+
+      {summary ? (
+        <section className="grid gap-4 md:grid-cols-3 xl:grid-cols-6">
+          <MetricCard label="Total" value={summary.total} detail="Attendance records for selected filters" Icon={CalendarCheck} />
+          {summary.byStatus.map((item) => <MetricCard key={item.status} label={humanize(item.status)} value={item.count} detail="Status count" Icon={CalendarCheck} />)}
+        </section>
+      ) : null}
+
+      <section className="rounded-lg border border-border bg-surface shadow-panel">
+        <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
+          <div>
+            <h3 className="text-base font-semibold">Attendance records</h3>
+            <p className="mt-1 text-xs text-muted-foreground">Marked by assigned teachers. No static rows.</p>
+          </div>
+          <span className="rounded-md border border-border bg-background px-2 py-1 text-sm font-medium">{formatNumber(rows.length)}</span>
+        </div>
+        {loading ? <StatePanel text="Loading attendance" compact /> : error ? <StatePanel text={error} tone="error" compact onRetry={() => setRetryKey((value) => value + 1)} /> : rows.length === 0 ? <StatePanel text="No attendance has been marked for the selected filters." compact /> : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-border text-sm">
+              <thead className="bg-muted/40 text-left text-xs uppercase text-muted-foreground">
+                <tr><th className="px-4 py-3 font-semibold">Student</th><th className="px-4 py-3 font-semibold">Class</th><th className="px-4 py-3 font-semibold">Date</th><th className="px-4 py-3 font-semibold">Status</th><th className="px-4 py-3 font-semibold">Remarks</th></tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {rows.map((row) => <tr key={row.id}><td className="px-4 py-3">{row.studentName}</td><td className="px-4 py-3">{row.className}</td><td className="px-4 py-3">{shortDate(row.attendanceDate)}</td><td className="px-4 py-3">{humanize(row.status ?? "")}</td><td className="px-4 py-3">{row.remarks ?? ""}</td></tr>)}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
 function SetupCoach({ dashboard, readiness, onOpenModule }: { dashboard: ReturnType<typeof normalizeSchoolAdminDashboard>; readiness: ReadinessData | null; onOpenModule: (moduleId: ModuleId) => void }) {
   const flags = readiness?.flags;
   const steps = [
@@ -533,7 +625,8 @@ function SetupCoach({ dashboard, readiness, onOpenModule }: { dashboard: ReturnT
     { label: "Create admissions", done: flags?.hasAdmission ?? dashboard.metrics.admissions > 0, count: readiness?.counts?.admissions ?? dashboard.metrics.admissions, moduleId: "admissions" as ModuleId, action: "Open admissions" },
     { label: "Enroll students", done: flags?.hasStudent ?? dashboard.metrics.students > 0, count: readiness?.counts?.students ?? dashboard.metrics.students, moduleId: "students" as ModuleId, action: "Open students" },
     { label: "Create teachers", done: flags?.hasTeacher ?? dashboard.metrics.teachers > 0, count: readiness?.counts?.teachers ?? dashboard.metrics.teachers, moduleId: "teachers" as ModuleId, action: "Open teachers" },
-    { label: "Assign teachers", done: flags?.hasTeacherAssignment ?? false, count: readiness?.counts?.teacherAssignments ?? 0, moduleId: "teachers" as ModuleId, action: "Open assignments" }
+    { label: "Assign teachers", done: flags?.hasTeacherAssignment ?? false, count: readiness?.counts?.teacherAssignments ?? 0, moduleId: "teachers" as ModuleId, action: "Open assignments" },
+    { label: "Mark attendance", done: flags?.hasAttendance ?? dashboard.metrics.attendance > 0, count: readiness?.counts?.attendanceRecords ?? dashboard.metrics.attendance, moduleId: "attendance" as ModuleId, action: "Open attendance" }
   ] as const;
   const complete = steps.filter((step) => step.done).length;
 

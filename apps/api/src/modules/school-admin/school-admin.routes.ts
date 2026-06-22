@@ -110,6 +110,15 @@ const admissionConvertSchema = z.object({
   notes: z.string().trim().max(2000).optional()
 });
 
+const attendanceQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(25),
+  date: z.coerce.date().optional(),
+  className: z.string().trim().optional(),
+  status: z.string().trim().optional(),
+  search: z.string().trim().optional()
+});
+
 type Resource =
   | "academic-years"
   | "classes"
@@ -245,7 +254,7 @@ router.get("/dashboard", async (req, res, next) => {
       prisma.section.count({ where: { schoolId } }),
       prisma.subject.count({ where: { schoolId } }),
       prisma.admissionApplication.count({ where: { schoolId } }),
-      prisma.attendanceRecord.count({ where: { schoolId } }),
+      prisma.teacherAttendance.count({ where: { schoolId } }),
       prisma.libraryBook.count({ where: { schoolId } }),
       prisma.feeRecord.count({ where: { schoolId } }),
       prisma.examRecord.count({ where: { schoolId } }),
@@ -253,7 +262,7 @@ router.get("/dashboard", async (req, res, next) => {
       prisma.lmsProgress.count({ where: { schoolId } }),
       prisma.studentProfile.groupBy({ by: ["className"], where: { schoolId }, _count: { _all: true }, orderBy: { className: "asc" } }),
       prisma.admissionApplication.groupBy({ by: ["status"], where: { schoolId }, _count: { _all: true }, orderBy: { status: "asc" } }),
-      prisma.attendanceRecord.groupBy({ by: ["status"], where: { schoolId }, _count: { _all: true }, orderBy: { status: "asc" } }),
+      prisma.teacherAttendance.groupBy({ by: ["status"], where: { schoolId }, _count: { _all: true }, orderBy: { status: "asc" } }),
       prisma.feeRecord.groupBy({ by: ["status"], where: { schoolId }, _count: { _all: true }, _sum: { amount: true }, orderBy: { status: "asc" } }),
       prisma.examRecord.groupBy({ by: ["status"], where: { schoolId }, _count: { _all: true }, orderBy: { status: "asc" } }),
       prisma.libraryBook.groupBy({ by: ["status"], where: { schoolId }, _count: { _all: true }, orderBy: { status: "asc" } }),
@@ -481,6 +490,44 @@ router.get("/leave-requests", async (req, res, next) => {
       data: rows.map(serializeLeaveRequest),
       pagination: { page: query.page, pageSize: query.pageSize, total: query.search ? searchedRows.length : total, totalPages: Math.ceil((query.search ? searchedRows.length : total) / query.pageSize) },
       meta: { requestId: res.locals.requestId }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/attendance", async (req, res, next) => {
+  try {
+    const schoolId = requireSchool(req, res);
+    if (!schoolId) return;
+    const query = attendanceQuerySchema.parse(req.query);
+    const where = buildAttendanceWhere(schoolId, query);
+    const [rows, total] = await Promise.all([
+      prisma.teacherAttendance.findMany({ where, orderBy: { attendanceDate: "desc" }, skip: (query.page - 1) * query.pageSize, take: query.pageSize }),
+      prisma.teacherAttendance.count({ where })
+    ]);
+    return paginated(res, rows, query.page, query.pageSize, total);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/attendance/summary", async (req, res, next) => {
+  try {
+    const schoolId = requireSchool(req, res);
+    if (!schoolId) return;
+    const query = attendanceQuerySchema.parse(req.query);
+    const where = buildAttendanceWhere(schoolId, query);
+    const [total, byStatus, byClass] = await Promise.all([
+      prisma.teacherAttendance.count({ where }),
+      prisma.teacherAttendance.groupBy({ by: ["status"], where, _count: { _all: true }, orderBy: { status: "asc" } }),
+      prisma.teacherAttendance.groupBy({ by: ["className"], where: { schoolId, ...(query.date ? attendanceDateWhere(query.date) : {}) }, _count: { _all: true }, orderBy: { className: "asc" } })
+    ]);
+    const statuses = ["PRESENT", "ABSENT", "LATE", "HALF_DAY", "EXCUSED"];
+    return ok(res, {
+      total,
+      byStatus: statuses.map((status) => ({ status, count: byStatus.find((item: any) => item.status === status)?._count?._all ?? 0 })),
+      byClass: byClass.map((item: any) => ({ className: item.className, count: item._count._all }))
     });
   } catch (error) {
     next(error);
@@ -1094,6 +1141,25 @@ function buildWhere(resource: Resource, schoolId: string, search?: string, statu
   };
   where.OR = searchFields[resource].map((field) => ({ [field]: { contains: search, mode: "insensitive" } }));
   return where;
+}
+
+function buildAttendanceWhere(schoolId: string, query: { date?: Date; className?: string; status?: string; search?: string }) {
+  const where: any = { schoolId };
+  if (query.status) where.status = query.status;
+  if (query.className) where.className = query.className;
+  if (query.date) Object.assign(where, attendanceDateWhere(query.date));
+  if (query.search) {
+    where.OR = ["studentName", "className", "remarks"].map((field) => ({ [field]: { contains: query.search, mode: "insensitive" } }));
+  }
+  return where;
+}
+
+function attendanceDateWhere(value: Date) {
+  const start = new Date(value);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+  return { attendanceDate: { gte: start, lt: end } };
 }
 
 function includeFor(resource: Resource) {
