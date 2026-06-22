@@ -52,6 +52,16 @@ type AttendanceRecord = {
   remarks?: string | null;
 };
 
+type ResultRecord = {
+  id: string;
+  studentName: string;
+  className: string;
+  subject: string;
+  assessment: string;
+  marksObtained: number;
+  maxMarks: number;
+  status: string;
+};
 type TimetableRecord = {
   id: string;
   className: string;
@@ -101,6 +111,7 @@ export function ParentPortal() {
   const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>([]);
   const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>([]);
   const [timetableRecords, setTimetableRecords] = useState<TimetableRecord[]>([]);
+  const [resultRecords, setResultRecords] = useState<ResultRecord[]>([]);
   const [form, setForm] = useState<LeaveForm>(emptyForm);
   const [loading, setLoading] = useState(true);
   const [childLoading, setChildLoading] = useState(false);
@@ -128,6 +139,7 @@ export function ParentPortal() {
       setLeaveRequests([]);
       setAttendanceRecords([]);
       setTimetableRecords([]);
+      setResultRecords([]);
       return;
     }
     setChildLoading(true);
@@ -136,13 +148,15 @@ export function ParentPortal() {
       api<ChildSummary>(`children/${selectedChildId}/summary`),
       api<LeaveRequest[]>(`children/${selectedChildId}/leave-requests`),
       api<AttendanceRecord[]>("attendance?pageSize=100"),
-      api<TimetableRecord[]>("timetable?pageSize=100")
+      api<TimetableRecord[]>("timetable?pageSize=100"),
+      api<ResultRecord[]>("results?pageSize=100")
     ])
-      .then(([nextSummary, nextRequests, nextAttendance, nextTimetable]) => {
+      .then(([nextSummary, nextRequests, nextAttendance, nextTimetable, nextResults]) => {
         setSummary(nextSummary ?? null);
         setLeaveRequests(Array.isArray(nextRequests) ? nextRequests : []);
         setAttendanceRecords(Array.isArray(nextAttendance) ? nextAttendance.filter((row) => row.studentName === nextSummary?.child?.name).slice(0, 10) : []);
         setTimetableRecords(Array.isArray(nextTimetable) ? nextTimetable.filter((row) => row.className === nextSummary?.child?.className).slice(0, 10) : []);
+        setResultRecords(Array.isArray(nextResults) ? nextResults.filter((row) => row.studentName === nextSummary?.child?.name).slice(0, 10) : []);
       })
       .catch((caught) => setError(caught instanceof Error ? caught.message : "Child dashboard could not load."))
       .finally(() => setChildLoading(false));
@@ -223,6 +237,7 @@ export function ParentPortal() {
 
           <AttendanceRecords records={attendanceRecords} />
           <TimetableRecords records={timetableRecords} />
+          <ResultRecords records={resultRecords} />
 
           <section className="rounded-lg border border-border bg-surface p-4 shadow-panel">
             <div className="flex items-center gap-2">
@@ -332,6 +347,24 @@ function TimetableRecords({ records }: { records: TimetableRecord[] }) {
               <p className="mt-1 text-muted-foreground">Teacher: {record.teacher}</p>
             </article>
           ))}
+        </div>
+      )}
+    </section>
+  );
+}
+function ResultRecords({ records }: { records: ResultRecord[] }) {
+  return (
+    <section className="rounded-lg border border-border bg-surface p-4 shadow-panel">
+      <div className="flex items-center gap-2">
+        <GraduationCap aria-hidden={true} className="text-primary" size={18} />
+        <h2 className="text-base font-semibold">Exam Results</h2>
+      </div>
+      {records.length === 0 ? <StatePanel text="No results have been published for this child yet." compact /> : (
+        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {records.map((record) => {
+            const percent = record.maxMarks > 0 ? Math.round((record.marksObtained / record.maxMarks) * 100) : null;
+            return <article key={record.id} className="rounded-md border border-border bg-background p-3 text-sm"><p className="font-semibold">{record.assessment}</p><p className="mt-1 text-muted-foreground">{record.subject} - {record.marksObtained}/{record.maxMarks}{percent == null ? "" : ` (${percent}%)`}</p><p className="mt-1 text-muted-foreground">{humanize(record.status)}</p></article>;
+          })}
         </div>
       )}
     </section>

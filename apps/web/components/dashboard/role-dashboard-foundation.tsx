@@ -323,9 +323,92 @@ function TimetableList({ title, records, loading, error, emptyText }: { title: s
       <h2 className="text-base font-semibold">{title}</h2>
       {loading ? <StatePanel text="Loading timetable" compact /> : error ? <StatePanel text={error} tone="error" compact /> : records.length === 0 ? <StatePanel text={emptyText} compact /> : (
         <div className="mt-4 grid gap-3 md:grid-cols-2">
-          {records.map((row) => <div key={String(row.id)} className="rounded-md border border-border bg-background p-3 text-sm"><p className="font-medium">{stringValue(row.subject)} - {stringValue(row.className)}</p><p className="mt-1 text-muted-foreground">{stringValue(row.dayOfWeek).replaceAll("_", " ")} • {stringValue(row.startsAt)} to {stringValue(row.endsAt)}</p><p className="mt-1 text-muted-foreground">Teacher: {stringValue(row.teacher)}</p></div>)}
+          {records.map((row) => <div key={String(row.id)} className="rounded-md border border-border bg-background p-3 text-sm"><p className="font-medium">{stringValue(row.subject)} - {stringValue(row.className)}</p><p className="mt-1 text-muted-foreground">{stringValue(row.dayOfWeek).replaceAll("_", " ")} Ã¢â‚¬Â¢ {stringValue(row.startsAt)} to {stringValue(row.endsAt)}</p><p className="mt-1 text-muted-foreground">Teacher: {stringValue(row.teacher)}</p></div>)}
         </div>
       )}
+    </section>
+  );
+}
+function TeacherMarksEntryPanel() {
+  const [exams, setExams] = useState<Row[]>([]);
+  const [examId, setExamId] = useState("");
+  const [students, setStudents] = useState<Row[]>([]);
+  const [marks, setMarks] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
+
+  useEffect(() => {
+    setLoading(true);
+    api("teacher", "exams")
+      .then((payload: ApiOne<Row[]>) => {
+        const rows = Array.isArray(payload.data) ? payload.data : [];
+        setExams(rows);
+        setExamId((current) => current || String(rows[0]?.id ?? ""));
+      })
+      .catch((caught) => setMessage({ tone: "error", text: caught instanceof Error ? caught.message : "Exams could not load." }))
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    if (!examId) { setStudents([]); return; }
+    api("teacher", `exams/${examId}/students`)
+      .then((payload: ApiOne<{ students: Row[] }>) => {
+        const rows = Array.isArray(payload.data?.students) ? payload.data.students : [];
+        setStudents(rows);
+        setMarks(Object.fromEntries(rows.map((student) => [String(student.name), String((student.mark as Row | undefined)?.marksObtained ?? "")])));
+      })
+      .catch((caught) => setMessage({ tone: "error", text: caught instanceof Error ? caught.message : "Students could not load for marks entry." }));
+  }, [examId]);
+
+  async function saveMarks() {
+    setSaving(true);
+    setMessage(null);
+    try {
+      await api("teacher", "results/marks", { method: "POST", body: JSON.stringify({ examId, records: students.map((student) => ({ studentName: String(student.name), marksObtained: Number(marks[String(student.name)] || 0) })) }) });
+      setMessage({ tone: "success", text: "Marks saved." });
+    } catch (caught) {
+      setMessage({ tone: "error", text: caught instanceof Error ? caught.message : "Marks could not be saved." });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="rounded-lg border border-border bg-surface p-4 shadow-panel">
+      <h2 className="text-base font-semibold">Exam Marks Entry</h2>
+      <p className="mt-1 text-sm text-muted-foreground">Enter marks only for assigned class and subject exams.</p>
+      {message ? <div className={`mt-3 rounded-md border p-3 text-sm ${message.tone === "success" ? "border-success/30 bg-success/10 text-success" : "border-error/30 bg-error/10 text-error"}`}>{message.text}</div> : null}
+      {loading ? <StatePanel text="Loading exams" compact /> : exams.length === 0 ? <StatePanel text="Ask School Admin to create exam schedule first." compact /> : (
+        <div className="mt-4 space-y-4">
+          <label className="grid gap-1 text-sm font-medium">Exam<select className="min-h-10 rounded-md border border-border bg-background px-3 text-sm" value={examId} onChange={(event) => setExamId(event.target.value)}>{exams.map((exam) => <option key={String(exam.id)} value={String(exam.id)}>{stringValue(exam.title)} - {stringValue(exam.className)} - {stringValue(exam.subject)}</option>)}</select></label>
+          {students.length === 0 ? <StatePanel text="No students found for this exam class." compact /> : <div className="overflow-x-auto"><table className="min-w-full divide-y divide-border text-sm"><thead className="bg-muted/40 text-left text-xs uppercase text-muted-foreground"><tr><th className="px-3 py-2 font-semibold">Student</th><th className="px-3 py-2 font-semibold">Marks</th></tr></thead><tbody className="divide-y divide-border">{students.map((student) => <tr key={String(student.id ?? student.name)}><td className="px-3 py-2">{stringValue(student.name)}</td><td className="px-3 py-2"><input className="min-h-9 rounded-md border border-border bg-background px-2 text-sm" min={0} type="number" value={marks[String(student.name)] ?? ""} onChange={(event) => setMarks((current) => ({ ...current, [String(student.name)]: event.target.value }))} /></td></tr>)}</tbody></table></div>}
+          <button className="inline-flex min-h-10 items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-60" disabled={saving || students.length === 0} onClick={saveMarks} type="button">{saving ? "Saving..." : "Save marks"}</button>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function StudentResultsPanel() {
+  const [records, setRecords] = useState<Row[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    setLoading(true);
+    api("student", "results?pageSize=20")
+      .then((payload: ApiOne<Row[]>) => setRecords(Array.isArray(payload.data) ? payload.data : []))
+      .catch((caught) => setError(caught instanceof Error ? caught.message : "Results could not load."))
+      .finally(() => setLoading(false));
+  }, []);
+  return <ResultList title="My Results" records={records} loading={loading} error={error} emptyText="No results have been published for you yet." />;
+}
+
+function ResultList({ title, records, loading, error, emptyText }: { title: string; records: Row[]; loading: boolean; error: string | null; emptyText: string }) {
+  return (
+    <section className="rounded-lg border border-border bg-surface p-4 shadow-panel">
+      <h2 className="text-base font-semibold">{title}</h2>
+      {loading ? <StatePanel text="Loading results" compact /> : error ? <StatePanel text={error} tone="error" compact /> : records.length === 0 ? <StatePanel text={emptyText} compact /> : <div className="mt-4 grid gap-3 md:grid-cols-2">{records.map((row) => { const percent = Number(row.maxMarks) > 0 ? Math.round((Number(row.marksObtained) / Number(row.maxMarks)) * 100) : null; return <div key={String(row.id)} className="rounded-md border border-border bg-background p-3 text-sm"><p className="font-medium">{stringValue(row.assessment)} - {stringValue(row.subject)}</p><p className="mt-1 text-muted-foreground">{stringValue(row.marksObtained)}/{stringValue(row.maxMarks)}{percent == null ? "" : ` (${percent}%)`}</p><p className="mt-1 text-muted-foreground">{stringValue(row.status)}</p></div>; })}</div>}
     </section>
   );
 }

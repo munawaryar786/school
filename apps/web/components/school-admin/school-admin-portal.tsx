@@ -127,7 +127,7 @@ const modules: ModuleConfig[] = [
   { id: "settings", label: "Settings", icon: Settings, purpose: "School profile, campuses, academic defaults, branding, and provider settings.", status: "Preview", nextAction: "Configure once settings workflow is enabled", requirements: "Needs school profile and provider configuration records." }
 ];
 
-const openedModules = new Set<ModuleId>(["academic", "classes", "sections", "subjects", "admissions", "students", "teachers", "parents", "attendance", "timetable"]);
+const openedModules = new Set<ModuleId>(["academic", "classes", "sections", "subjects", "admissions", "students", "teachers", "parents", "attendance", "timetable", "exams"]);
 const lockedDependencyText: Partial<Record<ModuleId, string>> = {
   attendance: "Locked until academic years, classes, sections, students, and teacher assignment foundations are complete.",
   timetable: "Locked until classes, sections, subjects, and teacher assignments are available.",
@@ -346,6 +346,8 @@ export function SchoolAdminPortal() {
           <AttendanceWorkspace refreshKey={refreshKey} />
         ) : activeModule === "timetable" ? (
           <TimetableWorkspace refreshKey={refreshKey} onChanged={refreshAll} />
+        ) : activeModule === "exams" ? (
+          <ExamsWorkspace refreshKey={refreshKey} onChanged={refreshAll} />
         ) : openedModules.has(activeModule) ? (
           <CorePeopleWorkspace moduleId={activeModule} refreshKey={refreshKey} onChanged={refreshAll} />
         ) : (
@@ -535,6 +537,72 @@ function LeaveRequestReviewQueue() {
   );
 }
 
+function ExamsWorkspace({ refreshKey, onChanged }: { refreshKey: number; onChanged: () => void }) {
+  const emptyForm = { title: "", className: "", subject: "", examDate: new Date().toISOString().slice(0, 10), maxMarks: 100, passingMarks: 40, status: "SCHEDULED" };
+  const { rows, loading, error, refresh, setRows } = useResourceList("exams", refreshKey);
+  const results = useResourceList("results", refreshKey);
+  const classes = useResourceList("classes", refreshKey);
+  const subjects = useResourceList("subjects", refreshKey);
+  const [form, setForm] = useState(emptyForm);
+  const [editing, setEditing] = useState<ResourceRow | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
+  const update = (key: keyof typeof emptyForm, value: string | number) => setForm((current) => ({ ...current, [key]: value }));
+  const startEdit = (row: ResourceRow) => {
+    setEditing(row);
+    setForm({ title: String(row.title ?? row.name ?? ""), className: String(row.className ?? ""), subject: String(row.subject ?? ""), examDate: String(row.examDate ?? "").slice(0, 10), maxMarks: Number(row.maxMarks ?? 100), passingMarks: 40, status: String(row.status ?? "SCHEDULED") });
+    setMessage(null);
+  };
+  const reset = () => { setEditing(null); setForm(emptyForm); };
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!form.title || !form.className || !form.subject || !form.examDate || !form.maxMarks) {
+      setMessage({ tone: "error", text: "Exam name, class, subject, date, and total marks are required." });
+      return;
+    }
+    if (Number(form.passingMarks) > Number(form.maxMarks)) {
+      setMessage({ tone: "error", text: "Passing marks cannot exceed total marks." });
+      return;
+    }
+    setSaving(true);
+    setMessage(null);
+    try {
+      const payload: ApiOne<ResourceRow> = await api(editing ? `exams/${editing.id}` : "exams", { method: editing ? "PATCH" : "POST", body: JSON.stringify(form) });
+      setRows((current) => editing ? current.map((row) => row.id === payload.data.id ? payload.data : row) : [payload.data, ...current]);
+      setMessage({ tone: "success", text: editing ? "Exam schedule updated." : "Exam schedule created." });
+      reset();
+      refresh();
+      onChanged();
+    } catch (caught) {
+      setMessage({ tone: "error", text: caught instanceof Error ? caught.message : "Exam schedule could not be saved." });
+    } finally {
+      setSaving(false);
+    }
+  }
+  const resultSummary = summarizeResultRows(results.rows);
+  return (
+    <div className="space-y-5">
+      <section className="rounded-lg border border-border bg-surface p-5 shadow-panel"><StatusBadge status="Ready" /><h2 className="mt-3 text-2xl font-semibold">Exams / Results</h2><p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">Create exam schedules and monitor teacher-entered result records. Start/end time and stored passing marks need a later schema expansion.</p></section>
+      <form className="rounded-lg border border-border bg-surface p-4 shadow-panel" onSubmit={submit}>
+        <h3 className="text-base font-semibold">{editing ? "Edit exam schedule" : "Create exam schedule"}</h3>
+        {message ? <div className={`mt-4 rounded-md border p-3 text-sm ${message.tone === "success" ? "border-success/30 bg-success/10 text-success" : "border-error/30 bg-error/10 text-error"}`}>{message.text}</div> : null}
+        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          <FieldControl field={{ name: "title", label: "Exam name", required: true, placeholder: "Term 1 Mathematics" }} value={form.title} onChange={(value) => update("title", value)} />
+          <FieldControl field={{ name: "className", label: "Class", type: "select", required: true, options: [{ value: "", label: classes.loading ? "Loading classes" : "Select class" }, ...classes.rows.map((row) => ({ value: String(row.name ?? row.id), label: optionLabelForClass(row) }))] }} value={form.className} onChange={(value) => update("className", value)} />
+          <FieldControl field={{ name: "subject", label: "Subject", type: "select", required: true, options: [{ value: "", label: subjects.loading ? "Loading subjects" : "Select subject" }, ...subjects.rows.map((row) => ({ value: String(row.name ?? row.id), label: `${row.name ?? row.code}${row.status ? ` - ${humanize(row.status)}` : ""}` }))] }} value={form.subject} onChange={(value) => update("subject", value)} />
+          <FieldControl field={{ name: "examDate", label: "Exam date", type: "date", required: true }} value={form.examDate} onChange={(value) => update("examDate", value)} />
+          <FieldControl field={{ name: "maxMarks", label: "Total marks", type: "number", required: true }} value={form.maxMarks} onChange={(value) => update("maxMarks", Number(value))} />
+          <FieldControl field={{ name: "passingMarks", label: "Passing marks", type: "number" }} value={form.passingMarks} onChange={(value) => update("passingMarks", Number(value))} />
+          <FieldControl field={{ name: "status", label: "Status", type: "select", options: [{ value: "SCHEDULED", label: "Scheduled" }, { value: "PUBLISHED", label: "Published" }, { value: "CANCELLED", label: "Cancelled" }] }} value={form.status} onChange={(value) => update("status", value)} />
+        </div>
+        <div className="mt-4 flex flex-wrap gap-2"><button className="inline-flex min-h-10 items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-60" disabled={saving || classes.rows.length === 0 || subjects.rows.length === 0} type="submit">{saving ? "Saving..." : editing ? "Update exam" : "Create exam"}</button>{editing ? <button className="inline-flex min-h-10 items-center justify-center rounded-md border border-border bg-background px-4 text-sm font-medium" onClick={reset} type="button">Cancel edit</button> : null}</div>
+      </form>
+      <section className="grid gap-4 md:grid-cols-3"><MetricCard label="Exam schedules" value={rows.length} detail="Schedules created by School Admin" Icon={ClipboardList} /><MetricCard label="Result records" value={results.rows.length} detail="Teacher-entered marks" Icon={GraduationCap} /><MetricCard label="Average score" value={resultSummary.average} detail="Average across result records" Icon={GraduationCap} /></section>
+      <section className="rounded-lg border border-border bg-surface shadow-panel"><div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3"><h3 className="text-base font-semibold">Exam schedules</h3><span className="rounded-md border border-border bg-background px-2 py-1 text-sm font-medium">{formatNumber(rows.length)}</span></div>{loading ? <StatePanel text="Loading exams" compact /> : error ? <StatePanel text={error} tone="error" compact onRetry={refresh} /> : rows.length === 0 ? <StatePanel text="No exam schedules have been created yet." compact /> : <div className="overflow-x-auto"><table className="min-w-full divide-y divide-border text-sm"><thead className="bg-muted/40 text-left text-xs uppercase text-muted-foreground"><tr><th className="px-4 py-3 font-semibold">Exam</th><th className="px-4 py-3 font-semibold">Class</th><th className="px-4 py-3 font-semibold">Subject</th><th className="px-4 py-3 font-semibold">Date</th><th className="px-4 py-3 font-semibold">Marks</th><th className="px-4 py-3 font-semibold">Status</th><th className="px-4 py-3 font-semibold">Action</th></tr></thead><tbody className="divide-y divide-border">{rows.map((row) => <tr key={row.id}><td className="px-4 py-3">{row.title}</td><td className="px-4 py-3">{row.className}</td><td className="px-4 py-3">{row.subject}</td><td className="px-4 py-3">{shortDate(row.examDate)}</td><td className="px-4 py-3">{row.maxMarks}</td><td className="px-4 py-3">{humanize(row.status ?? "")}</td><td className="px-4 py-3"><button className="rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium" onClick={() => startEdit(row)} type="button">Edit</button></td></tr>)}</tbody></table></div>}</section>
+      <section className="rounded-lg border border-border bg-surface shadow-panel"><div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3"><h3 className="text-base font-semibold">Result records</h3><span className="rounded-md border border-border bg-background px-2 py-1 text-sm font-medium">{formatNumber(results.rows.length)}</span></div>{results.loading ? <StatePanel text="Loading results" compact /> : results.error ? <StatePanel text={results.error} tone="error" compact onRetry={results.refresh} /> : results.rows.length === 0 ? <StatePanel text="No result marks have been entered yet." compact /> : <div className="overflow-x-auto"><table className="min-w-full divide-y divide-border text-sm"><thead className="bg-muted/40 text-left text-xs uppercase text-muted-foreground"><tr><th className="px-4 py-3 font-semibold">Student</th><th className="px-4 py-3 font-semibold">Exam</th><th className="px-4 py-3 font-semibold">Subject</th><th className="px-4 py-3 font-semibold">Marks</th><th className="px-4 py-3 font-semibold">Status</th></tr></thead><tbody className="divide-y divide-border">{results.rows.map((row) => <tr key={row.id}><td className="px-4 py-3">{row.studentName}</td><td className="px-4 py-3">{row.assessment}</td><td className="px-4 py-3">{row.subject}</td><td className="px-4 py-3">{row.marksObtained}/{row.maxMarks}</td><td className="px-4 py-3">{humanize(row.status ?? "")}</td></tr>)}</tbody></table></div>}</section>
+    </div>
+  );
+}
 function TimetableWorkspace({ refreshKey, onChanged }: { refreshKey: number; onChanged: () => void }) {
   const emptyForm = { className: "", subject: "", teacher: "", dayOfWeek: "MONDAY", startsAt: "08:00", endsAt: "08:40", status: "ACTIVE" };
   const { rows, loading, error, refresh, setRows } = useResourceList("timetable", refreshKey);
@@ -750,7 +818,9 @@ function SetupCoach({ dashboard, readiness, onOpenModule }: { dashboard: ReturnT
     { label: "Create teachers", done: flags?.hasTeacher ?? dashboard.metrics.teachers > 0, count: readiness?.counts?.teachers ?? dashboard.metrics.teachers, moduleId: "teachers" as ModuleId, action: "Open teachers" },
     { label: "Assign teachers", done: flags?.hasTeacherAssignment ?? false, count: readiness?.counts?.teacherAssignments ?? 0, moduleId: "teachers" as ModuleId, action: "Open assignments" },
     { label: "Mark attendance", done: flags?.hasAttendance ?? dashboard.metrics.attendance > 0, count: readiness?.counts?.attendanceRecords ?? dashboard.metrics.attendance, moduleId: "attendance" as ModuleId, action: "Open attendance" },
-    { label: "Create timetable slots", done: flags?.hasTimetable ?? dashboard.metrics.timetable > 0, count: readiness?.counts?.timetableSlots ?? dashboard.metrics.timetable, moduleId: "timetable" as ModuleId, action: "Open timetable" }
+    { label: "Create timetable slots", done: flags?.hasTimetable ?? dashboard.metrics.timetable > 0, count: readiness?.counts?.timetableSlots ?? dashboard.metrics.timetable, moduleId: "timetable" as ModuleId, action: "Open timetable" },
+    { label: "Create exam schedules", done: flags?.hasExam ?? dashboard.metrics.exams > 0, count: readiness?.counts?.examRecords ?? dashboard.metrics.exams, moduleId: "exams" as ModuleId, action: "Open exams" },
+    { label: "Enter marks", done: flags?.hasResult ?? false, count: readiness?.counts?.resultRecords ?? 0, moduleId: "exams" as ModuleId, action: "Review results" }
   ] as const;
   const complete = steps.filter((step) => step.done).length;
 
@@ -1640,6 +1710,11 @@ function useResourceList(resource: string, refreshKey: number, enabled = true) {
   return { rows, loading, error, setRows, refresh: () => setRetryKey((value) => value + 1) };
 }
 
+function summarizeResultRows(rows: ResourceRow[]) {
+  const scored = rows.filter((row) => Number(row.maxMarks) > 0);
+  const average = scored.length === 0 ? 0 : Math.round(scored.reduce((sum, row) => sum + (Number(row.marksObtained ?? 0) / Number(row.maxMarks)) * 100, 0) / scored.length);
+  return { average };
+}
 function normalizeFieldValue(value: any, type?: FieldType) {
   if (type === "date" && value) return new Date(value).toISOString().slice(0, 10);
   if (type === "checkbox") return Boolean(value);

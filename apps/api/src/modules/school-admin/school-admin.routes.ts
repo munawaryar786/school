@@ -137,6 +137,24 @@ const timetableSlotSchema = z.object({
   endsAt: z.string().trim().min(1),
   status: z.string().trim().default("ACTIVE")
 });
+const examQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(100),
+  className: z.string().trim().optional(),
+  subject: z.string().trim().optional(),
+  status: z.string().trim().optional(),
+  search: z.string().trim().optional()
+});
+
+const examScheduleSchema = z.object({
+  title: z.string().trim().min(2),
+  className: z.string().trim().min(1),
+  subject: z.string().trim().min(1),
+  examDate: z.coerce.date(),
+  maxMarks: z.coerce.number().int().min(1).default(100),
+  passingMarks: z.coerce.number().int().min(0).optional(),
+  status: z.string().trim().default("SCHEDULED")
+});
 
 type Resource =
   | "academic-years"
@@ -276,14 +294,14 @@ router.get("/dashboard", async (req, res, next) => {
       prisma.teacherAttendance.count({ where: { schoolId } }),
       prisma.libraryBook.count({ where: { schoolId } }),
       prisma.feeRecord.count({ where: { schoolId } }),
-      prisma.examRecord.count({ where: { schoolId } }),
+      prisma.examinationSchedule.count({ where: { schoolId } }),
       prisma.timetableSlot.count({ where: { schoolId } }),
       prisma.lmsProgress.count({ where: { schoolId } }),
       prisma.studentProfile.groupBy({ by: ["className"], where: { schoolId }, _count: { _all: true }, orderBy: { className: "asc" } }),
       prisma.admissionApplication.groupBy({ by: ["status"], where: { schoolId }, _count: { _all: true }, orderBy: { status: "asc" } }),
       prisma.teacherAttendance.groupBy({ by: ["status"], where: { schoolId }, _count: { _all: true }, orderBy: { status: "asc" } }),
       prisma.feeRecord.groupBy({ by: ["status"], where: { schoolId }, _count: { _all: true }, _sum: { amount: true }, orderBy: { status: "asc" } }),
-      prisma.examRecord.groupBy({ by: ["status"], where: { schoolId }, _count: { _all: true }, orderBy: { status: "asc" } }),
+      prisma.examinationSchedule.groupBy({ by: ["status"], where: { schoolId }, _count: { _all: true }, orderBy: { status: "asc" } }),
       prisma.libraryBook.groupBy({ by: ["status"], where: { schoolId }, _count: { _all: true }, orderBy: { status: "asc" } }),
       prisma.lmsProgress.groupBy({ by: ["status"], where: { schoolId }, _count: { _all: true }, orderBy: { status: "asc" } }),
       prisma.auditLog.findMany({
@@ -553,6 +571,93 @@ router.get("/attendance/summary", async (req, res, next) => {
   }
 });
 
+router.get("/exams", async (req, res, next) => {
+  try {
+    const schoolId = requireSchool(req, res);
+    if (!schoolId) return;
+    const query = examQuerySchema.parse(req.query);
+    const where = buildExamWhere(schoolId, query);
+    const [rows, total] = await Promise.all([
+      prisma.examinationSchedule.findMany({ where, orderBy: [{ examDate: "asc" }, { title: "asc" }], skip: (query.page - 1) * query.pageSize, take: query.pageSize }),
+      prisma.examinationSchedule.count({ where })
+    ]);
+    return paginated(res, rows, query.page, query.pageSize, total);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/exams", async (req, res, next) => {
+  try {
+    const schoolId = requireSchool(req, res);
+    if (!schoolId) return;
+    const input = examScheduleSchema.parse(req.body);
+    const data = await normalizeExamInput(schoolId, input, res);
+    if (!data) return;
+    const row = await prisma.examinationSchedule.create({ data: { schoolId, ...data } });
+    await writeAudit(req, "CREATE", "exams", row.id, { title: row.title, className: row.className, subject: row.subject });
+    return ok(res, row, 201);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.patch("/exams/:id", async (req, res, next) => {
+  try {
+    const schoolId = requireSchool(req, res);
+    if (!schoolId) return;
+    const existing = await prisma.examinationSchedule.findFirst({ where: { id: routeId(req), schoolId } });
+    if (!existing) return fail(res, 404, "NOT_FOUND", "Exam schedule not found for this school.");
+    const input = examScheduleSchema.partial().parse(req.body);
+    const merged = { ...existing, ...input };
+    const data = await normalizeExamInput(schoolId, merged, res);
+    if (!data) return;
+    const row = await prisma.examinationSchedule.update({ where: { id: existing.id }, data });
+    await writeAudit(req, "UPDATE", "exams", row.id, { title: row.title, className: row.className, subject: row.subject });
+    return ok(res, row);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/results", async (req, res, next) => {
+  try {
+    const schoolId = requireSchool(req, res);
+    if (!schoolId) return;
+    const query = examQuerySchema.parse(req.query);
+    const where = buildResultWhere(schoolId, query);
+    const [rows, total] = await Promise.all([
+      prisma.teacherMark.findMany({ where, orderBy: { createdAt: "desc" }, skip: (query.page - 1) * query.pageSize, take: query.pageSize }),
+      prisma.teacherMark.count({ where })
+    ]);
+    return paginated(res, rows.map(serializeTeacherMark), query.page, query.pageSize, total);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/results/summary", async (req, res, next) => {
+  try {
+    const schoolId = requireSchool(req, res);
+    if (!schoolId) return;
+    const query = examQuerySchema.parse(req.query);
+    const where = buildResultWhere(schoolId, query);
+    const [total, byStatus, byClass, bySubject] = await Promise.all([
+      prisma.teacherMark.count({ where }),
+      prisma.teacherMark.groupBy({ by: ["status"], where, _count: { _all: true }, orderBy: { status: "asc" } }),
+      prisma.teacherMark.groupBy({ by: ["className"], where, _count: { _all: true }, orderBy: { className: "asc" } }),
+      prisma.teacherMark.groupBy({ by: ["subject"], where, _count: { _all: true }, orderBy: { subject: "asc" } })
+    ]);
+    return ok(res, {
+      total,
+      byStatus: byStatus.map((item: any) => ({ status: item.status, count: item._count._all })),
+      byClass: byClass.map((item: any) => ({ className: item.className, count: item._count._all })),
+      bySubject: bySubject.map((item: any) => ({ subject: item.subject, count: item._count._all }))
+    });
+  } catch (error) {
+    next(error);
+  }
+});
 router.get("/timetable", async (req, res, next) => {
   try {
     const schoolId = requireSchool(req, res);
@@ -1238,6 +1343,73 @@ function buildAttendanceWhere(schoolId: string, query: { date?: Date; className?
 }
 
 
+function buildExamWhere(schoolId: string, query: { className?: string; subject?: string; status?: string; search?: string }) {
+  const where: any = { schoolId };
+  if (query.className) where.className = query.className;
+  if (query.subject) where.subject = query.subject;
+  if (query.status) where.status = query.status;
+  if (query.search) {
+    where.OR = ["title", "className", "subject", "status"].map((field) => ({ [field]: { contains: query.search, mode: "insensitive" } }));
+  }
+  return where;
+}
+
+function buildResultWhere(schoolId: string, query: { className?: string; subject?: string; status?: string; search?: string }) {
+  const where: any = { schoolId };
+  if (query.className) where.className = query.className;
+  if (query.subject) where.subject = query.subject;
+  if (query.status) where.status = query.status;
+  if (query.search) {
+    where.OR = ["studentName", "className", "subject", "assessment", "status"].map((field) => ({ [field]: { contains: query.search, mode: "insensitive" } }));
+  }
+  return where;
+}
+
+async function normalizeExamInput(schoolId: string, input: Record<string, any>, res: Response) {
+  if (input.passingMarks !== undefined && Number(input.passingMarks) > Number(input.maxMarks)) {
+    fail(res, 400, "VALIDATION_ERROR", "Passing marks cannot exceed total marks.");
+    return null;
+  }
+  const classRow = await prisma.classLevel.findFirst({
+    where: { schoolId, OR: [{ id: input.className }, { name: { equals: input.className, mode: "insensitive" } }, { code: { equals: input.className, mode: "insensitive" } }] },
+    select: { name: true }
+  });
+  if (!classRow) {
+    fail(res, 404, "NOT_FOUND", "Class not found for this school.");
+    return null;
+  }
+  const subjectRow = await prisma.subject.findFirst({
+    where: { schoolId, OR: [{ id: input.subject }, { name: { equals: input.subject, mode: "insensitive" } }, { code: { equals: input.subject, mode: "insensitive" } }] },
+    select: { name: true }
+  });
+  if (!subjectRow) {
+    fail(res, 404, "NOT_FOUND", "Subject not found for this school.");
+    return null;
+  }
+  return {
+    title: input.title,
+    className: classRow.name,
+    subject: subjectRow.name,
+    examDate: input.examDate,
+    maxMarks: Number(input.maxMarks ?? 100),
+    status: input.status ?? "SCHEDULED"
+  };
+}
+
+function serializeTeacherMark(row: any) {
+  const percentage = row.maxMarks > 0 ? Math.round((row.marksObtained / row.maxMarks) * 100) : null;
+  return { ...row, percentage, grade: gradeForPercentage(percentage) };
+}
+
+function gradeForPercentage(value: number | null) {
+  if (value == null) return null;
+  if (value >= 90) return "A+";
+  if (value >= 80) return "A";
+  if (value >= 70) return "B";
+  if (value >= 60) return "C";
+  if (value >= 50) return "D";
+  return "F";
+}
 function buildTimetableWhere(schoolId: string, query: { className?: string; teacher?: string; dayOfWeek?: string; status?: string; search?: string }) {
   const where: any = { schoolId };
   if (query.className) where.className = query.className;

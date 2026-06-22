@@ -88,6 +88,14 @@ const schemas = {
 } as const;
 
 const attendanceStatuses = new Set(["PRESENT", "ABSENT", "LATE", "HALF_DAY", "EXCUSED"]);
+const marksEntrySchema = z.object({
+  examId: z.string().min(1),
+  records: z.array(z.object({
+    studentName: z.string().min(2),
+    marksObtained: z.coerce.number().int().min(0),
+    remarks: z.string().optional()
+  })).min(1)
+});
 
 type Resource = keyof typeof schemas;
 
@@ -253,6 +261,72 @@ router.post("/attendance/mark", async (req, res, next) => {
   }
 });
 
+router.get("/exams", async (req, res, next) => {
+  try {
+    const scope = requireTeacherScope(req, res);
+    if (!scope) return;
+    const pairs = await assignedClassSubjectPairs(scope.schoolId, scope.teacherId);
+    if (pairs.length === 0) return ok(res, []);
+    const rows = await prisma.examinationSchedule.findMany({
+      where: { schoolId: scope.schoolId, status: { not: "CANCELLED" }, OR: pairs },
+      orderBy: [{ examDate: "asc" }, { title: "asc" }]
+    });
+    return ok(res, rows);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/exams/:id/students", async (req, res, next) => {
+  try {
+    const scope = requireTeacherScope(req, res);
+    if (!scope) return;
+    const exam = await ensureAssignedExam(scope.schoolId, scope.teacherId, routeId(req));
+    if (!exam) return fail(res, 403, "FORBIDDEN", "Teacher is not assigned to this exam class or subject.");
+    const students = await prisma.studentProfile.findMany({
+      where: { schoolId: scope.schoolId, className: exam.className, status: "ACTIVE" },
+      orderBy: { name: "asc" },
+      select: { id: true, admissionNumber: true, name: true, className: true, status: true }
+    });
+    const marks = await prisma.teacherMark.findMany({ where: { schoolId: scope.schoolId, teacherId: scope.teacherId, className: exam.className, subject: exam.subject, assessment: exam.title } });
+    const markByStudent = new Map(marks.map((row: any) => [row.studentName, serializeMark(row)]));
+    return ok(res, { exam, students: students.map((student) => ({ ...student, mark: markByStudent.get(student.name) ?? null })) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/results/marks", async (req, res, next) => {
+  try {
+    const scope = requireTeacherScope(req, res);
+    if (!scope) return;
+    const input = marksEntrySchema.parse(req.body);
+    const exam = await ensureAssignedExam(scope.schoolId, scope.teacherId, input.examId);
+    if (!exam) return fail(res, 403, "FORBIDDEN", "Teacher is not assigned to this exam class or subject.");
+    const students = await prisma.studentProfile.findMany({ where: { schoolId: scope.schoolId, className: exam.className, status: "ACTIVE" }, select: { name: true } });
+    const allowedNames = new Set(students.map((student) => student.name));
+    const invalid = input.records.find((record) => !allowedNames.has(record.studentName));
+    if (invalid) return fail(res, 403, "FORBIDDEN", "Teacher cannot enter marks for a student outside the assigned class.");
+    const tooHigh = input.records.find((record) => record.marksObtained > exam.maxMarks);
+    if (tooHigh) return fail(res, 400, "VALIDATION_ERROR", "Marks obtained cannot exceed total marks.");
+    const rows = await prisma.$transaction(async (tx) => {
+      const saved = [];
+      for (const record of input.records) {
+        const existing = await tx.teacherMark.findFirst({ where: { schoolId: scope.schoolId, teacherId: scope.teacherId, studentName: record.studentName, className: exam.className, subject: exam.subject, assessment: exam.title } });
+        if (existing) {
+          saved.push(await tx.teacherMark.update({ where: { id: existing.id }, data: { marksObtained: record.marksObtained, maxMarks: exam.maxMarks, status: "RECORDED" } }));
+        } else {
+          saved.push(await tx.teacherMark.create({ data: { schoolId: scope.schoolId, teacherId: scope.teacherId, studentName: record.studentName, className: exam.className, subject: exam.subject, assessment: exam.title, marksObtained: record.marksObtained, maxMarks: exam.maxMarks, status: "RECORDED" } }));
+        }
+      }
+      return saved;
+    });
+    await writeAudit(req, "CREATE", "marks", input.examId, { records: rows.length, className: exam.className, subject: exam.subject });
+    return ok(res, { saved: rows.length, records: rows.map(serializeMark) });
+  } catch (error) {
+    next(error);
+  }
+});
 router.get("/timetable", async (req, res, next) => {
   try {
     const scope = requireTeacherScope(req, res);
@@ -395,6 +469,36 @@ async function findTeacherAssignmentScope(schoolId: string, userId: string) {
   return { assignmentCount, profile };
 }
 
+async function assignedClassSubjectPairs(schoolId: string, userId: string) {
+  const assignmentScope = await findTeacherAssignmentScope(schoolId, userId);
+  if (!assignmentScope.profile) return [];
+  const assignments = await (prisma as any).teacherSubjectAssignment.findMany({
+    where: { schoolId, teacherId: assignmentScope.profile.id, status: "ACTIVE" },
+    include: { class: { select: { name: true } }, subject: { select: { name: true } } }
+  });
+  return assignments.filter((row: any) => row.class?.name && row.subject?.name).map((row: any) => ({ className: row.class.name, subject: row.subject.name }));
+}
+
+async function ensureAssignedExam(schoolId: string, userId: string, examId: string) {
+  const pairs = await assignedClassSubjectPairs(schoolId, userId);
+  if (pairs.length === 0) return null;
+  return prisma.examinationSchedule.findFirst({ where: { id: examId, schoolId, OR: pairs } });
+}
+
+function serializeMark(row: any) {
+  const percentage = row.maxMarks > 0 ? Math.round((row.marksObtained / row.maxMarks) * 100) : null;
+  return { ...row, percentage, grade: gradeForPercentage(percentage) };
+}
+
+function gradeForPercentage(value: number | null) {
+  if (value == null) return null;
+  if (value >= 90) return "A+";
+  if (value >= 80) return "A";
+  if (value >= 70) return "B";
+  if (value >= 60) return "C";
+  if (value >= 50) return "D";
+  return "F";
+}
 async function ensureTeacherAssignedClass(schoolId: string, userId: string, classId: string, sectionId: string | null) {
   const assignmentScope = await findTeacherAssignmentScope(schoolId, userId);
   if (!assignmentScope.profile) return null;
