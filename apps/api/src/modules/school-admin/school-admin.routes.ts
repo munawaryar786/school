@@ -840,14 +840,14 @@ function buildWhere(resource: Resource, schoolId: string, search?: string, statu
 }
 
 function includeFor(resource: Resource) {
-  if (resource === "sections") return { include: { class: { select: { id: true, name: true, code: true } } } };
+  if (resource === "sections") return { include: { class: { select: { id: true, name: true, code: true, status: true } } } };
   if (resource === "teacher-assignments") {
     return {
       include: {
         teacher: { select: { id: true, employeeNumber: true, name: true, email: true } },
-        class: { select: { id: true, name: true, code: true } },
-        section: { select: { id: true, name: true } },
-        subject: { select: { id: true, name: true, code: true } }
+        class: { select: { id: true, name: true, code: true, status: true } },
+        section: { select: { id: true, name: true, status: true } },
+        subject: { select: { id: true, name: true, code: true, status: true } }
       }
     };
   }

@@ -845,20 +845,21 @@ function TeacherAssignments({ refreshKey, onChanged }: { refreshKey: number; onC
   const { rows: classes } = useResourceList("classes", refreshKey);
   const { rows: sections } = useResourceList("sections", refreshKey);
   const { rows: subjects } = useResourceList("subjects", refreshKey);
+  const classRows = teacherAssignmentClassRows(classes, sections);
   const dynamicConfig = {
     ...config,
     fields: config.fields.map((field) => {
-      if (field.name === "teacherId") return { ...field, options: teachers.map((row) => ({ value: row.id, label: row.name ?? row.email ?? row.id })) };
-      if (field.name === "classId") return { ...field, options: classes.map((row) => ({ value: row.id, label: optionLabelForClass(row) })) };
+      if (field.name === "teacherId") return { ...field, options: [{ value: "", label: "Select teacher" }, ...teachers.map((row) => ({ value: row.id, label: row.name ?? row.email ?? row.id }))] };
+      if (field.name === "classId") return { ...field, options: [{ value: "", label: "Select class" }, ...classRows.map((row) => ({ value: row.id, label: optionLabelForClass(row) }))] };
       if (field.name === "sectionId") return { ...field, options: [{ value: "", label: "All sections" }, ...sections.map((row) => ({ value: row.id, label: optionLabelForSection(row) }))] };
-      if (field.name === "subjectId") return { ...field, options: subjects.map((row) => ({ value: row.id, label: optionLabelForSubject(row) })) };
+      if (field.name === "subjectId") return { ...field, options: [{ value: "", label: "Select subject" }, ...subjects.map((row) => ({ value: row.id, label: optionLabelForSubject(row) }))] };
       return field;
     })
   };
 
   return (
     <div className="space-y-4">
-      {classes.length === 0 ? <StatePanel text="Create classes before assigning teachers. The class dropdown uses real class records only." compact /> : null}
+      {classRows.length === 0 ? <StatePanel text="Create classes before assigning teachers." compact /> : null}
       {subjects.length === 0 ? <StatePanel text="Create subjects before assigning teachers. The subject dropdown uses real subject records only." compact /> : null}
       {sections.length === 0 ? <StatePanel text="Create sections before assigning section-specific teachers. You can still use All sections." compact /> : null}
       <section className="grid gap-4 xl:grid-cols-[380px_1fr]">
@@ -1044,10 +1045,29 @@ function shortDate(value: string) {
 }
 
 function optionLabelForClass(row: ResourceRow) {
-  const name = row.name ?? row.title ?? row.className ?? row.code ?? row.id;
+  const name = row.name ?? row.title ?? row.className ?? row.gradeName ?? row.code ?? row.id;
   const code = row.code ? ` (${row.code})` : "";
   const status = row.status ? ` - ${humanize(row.status)}` : "";
   return `${name}${code}${status}`;
+}
+
+function teacherAssignmentClassRows(classes: ResourceRow[], sections: ResourceRow[]) {
+  const byId = new Map<string, ResourceRow>();
+  classes.forEach((row) => {
+    if (row.id) byId.set(row.id, row);
+  });
+  sections.forEach((section) => {
+    const relatedClass = section.class;
+    if (relatedClass?.id && !byId.has(relatedClass.id)) {
+      byId.set(relatedClass.id, {
+        id: relatedClass.id,
+        name: relatedClass.name,
+        code: relatedClass.code,
+        status: relatedClass.status ?? section.status
+      });
+    }
+  });
+  return Array.from(byId.values()).sort((left, right) => optionLabelForClass(left).localeCompare(optionLabelForClass(right), undefined, { numeric: true }));
 }
 
 function optionLabelForSection(row: ResourceRow) {
