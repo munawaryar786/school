@@ -131,6 +131,7 @@ export function AppShell({ role, name, children }: { role: Role; name: string; c
   const pathname = usePathname();
   const theme = ROLE_THEME[role];
   const nav = navByRole[role];
+  const displayName = name.trim() || "User";
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [themePreference, setThemePreference] = useState<ThemePreference>("system");
@@ -155,13 +156,13 @@ export function AppShell({ role, name, children }: { role: Role; name: string; c
       </a>
 
       <div className={cn("min-h-screen lg:grid", sidebarCollapsed ? "lg:grid-cols-[84px_1fr]" : "lg:grid-cols-[292px_1fr]")}>
-        <Sidebar roleName={theme.name} name={name} nav={nav} pathname={pathname} collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed((value) => !value)} />
+        <Sidebar roleName={theme.name} name={displayName} nav={nav} pathname={pathname} collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed((value) => !value)} />
 
         <div className="min-w-0 lg:h-screen lg:overflow-y-auto">
           <Topbar
             pageTitle={pageTitle}
             roleName={theme.name}
-            name={name}
+            name={displayName}
             breadcrumbs={breadcrumbs}
             themePreference={themePreference}
             setThemePreference={setThemePreference}
@@ -176,7 +177,7 @@ export function AppShell({ role, name, children }: { role: Role; name: string; c
         </div>
       </div>
 
-      <MobileNav open={mobileOpen} onClose={() => setMobileOpen(false)} roleName={theme.name} name={name} nav={nav} pathname={pathname} />
+      <MobileNav open={mobileOpen} onClose={() => setMobileOpen(false)} roleName={theme.name} name={displayName} nav={nav} pathname={pathname} />
     </div>
   );
 }
@@ -337,6 +338,8 @@ function NavLink({ item, active, collapsed, onClick, darkSurface }: { item: NavI
 
 function ProfilePanel({ name, roleName, mobile }: { name: string; roleName: string; mobile?: boolean }) {
   const [open, setOpen] = useState(false);
+  const displayName = name.trim() || "User";
+  const displayRole = roleName.trim() || "School profile";
 
   return (
     <div className={cn("shrink-0 rounded-md border p-3 shadow-panel", mobile ? "border-border bg-background" : "mt-4 border-slate-800 bg-slate-900")}>
@@ -346,16 +349,16 @@ function ProfilePanel({ name, roleName, mobile }: { name: string; roleName: stri
         aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
       >
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary text-xs font-semibold text-primary-foreground">{initials(name)}</span>
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary text-xs font-semibold text-primary-foreground">{initials(displayName)}</span>
         <span className="min-w-0 flex-1">
-          <span className={cn("block truncate text-sm font-medium", mobile ? "text-foreground" : "text-slate-100")} title={name}>{name}</span>
-          <span className={cn("block truncate text-xs", mobile ? "text-muted-foreground" : "text-slate-400")} title={roleName}>{roleName}</span>
+          <span className={cn("block truncate text-sm font-medium", mobile ? "text-foreground" : "text-slate-100")} title={displayName}>{displayName}</span>
+          <span className={cn("block truncate text-xs", mobile ? "text-muted-foreground" : "text-slate-400")} title={displayRole}>{displayRole}</span>
         </span>
         <ChevronDown aria-hidden={true} className={cn("shrink-0 transition", open && "rotate-180")} size={16} />
       </button>
       {open ? (
         <div className={cn("mt-3 rounded-md border p-2", mobile ? "border-border bg-surface" : "border-slate-800 bg-slate-950")}>
-          <p className={cn("px-2 py-1 text-xs", mobile ? "text-muted-foreground" : "text-slate-400")}>Signed in with {roleName} access</p>
+          <p className={cn("px-2 py-1 text-xs", mobile ? "text-muted-foreground" : "text-slate-400")}>Signed in with {displayRole} access</p>
           <LogoutButton icon={<LogOut aria-hidden="true" size={16} />} compact />
         </div>
       ) : null}
@@ -380,10 +383,11 @@ function isActive(pathname: string, href: string) {
 }
 
 function initials(name: string) {
-  return name
+  const value = name
     .split(" ")
     .filter(Boolean)
     .slice(0, 2)
     .map((part) => part.charAt(0).toUpperCase())
     .join("");
+  return value || "U";
 }

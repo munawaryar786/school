@@ -411,6 +411,16 @@ function normalizeDashboard(data: Row | null | undefined) {
 }
 
 function getProfileRows(data: Row, kind: keyof typeof configs) {
+  if (kind === "teacher" && isObject(data.profile)) {
+    return [
+      { label: "Name", value: stringValue(data.profile.name) },
+      { label: "Employee number", value: stringValue(data.profile.employeeNumber) },
+      { label: "Email", value: stringValue(data.profile.email) },
+      { label: "Specialization", value: stringValue(data.profile.specialization) },
+      { label: "Status", value: stringValue(data.profile.status) }
+    ].filter((item) => item.value !== "Not available");
+  }
+
   if (kind === "student" && isObject(data.profile)) {
     return [
       { label: "Name", value: stringValue(data.profile.name) },

@@ -73,7 +73,7 @@ type LeaveRequest = {
 };
 type IconType = ComponentType<{ size?: number; "aria-hidden"?: boolean; className?: string }>;
 type ModuleStatus = "Ready" | "Setup Required" | "Preview" | "Locked" | "Coming Later";
-type FieldType = "text" | "date" | "number" | "select" | "checkbox";
+type FieldType = "text" | "date" | "number" | "select" | "checkbox" | "password";
 type ResourceRow = Record<string, any> & { id: string; status?: string };
 type FieldConfig = { name: string; label: string; type?: FieldType; required?: boolean; options?: Array<{ value: string; label: string }>; placeholder?: string };
 type ResourceConfig = { moduleId: ModuleId; resource: string; title: string; description: string; fields: FieldConfig[]; columns: Array<{ key: string; label: string; render?: (row: ResourceRow) => string }>; submitLabel: string; emptyText: string };
@@ -216,7 +216,7 @@ const resourceConfigs: Record<Exclude<ModuleId, "dashboard" | "admissions" | "at
     moduleId: "teachers",
     resource: "teachers",
     title: "Teachers",
-    description: "Manage teacher profiles and add class/section/subject assignment foundations below.",
+    description: "Manage teacher profiles, login access, and class/section/subject assignment foundations below.",
     submitLabel: "Save teacher",
     emptyText: "No teacher profiles exist yet.",
     fields: [
@@ -225,9 +225,18 @@ const resourceConfigs: Record<Exclude<ModuleId, "dashboard" | "admissions" | "at
       { name: "email", label: "Email", required: true },
       { name: "phone", label: "Phone" },
       { name: "specialization", label: "Specialization" },
-      { name: "status", label: "Status", type: "select", options: statusOptions }
+      { name: "status", label: "Status", type: "select", options: statusOptions },
+      { name: "loginEnabled", label: "Login enabled", type: "checkbox" },
+      { name: "password", label: "Temporary/reset password", type: "password", placeholder: "Minimum 8 characters" }
     ],
-    columns: [{ key: "employeeNumber", label: "Employee #" }, { key: "name", label: "Name" }, { key: "email", label: "Email" }, { key: "specialization", label: "Specialization" }, { key: "status", label: "Status" }]
+    columns: [
+      { key: "employeeNumber", label: "Employee #" },
+      { key: "name", label: "Name" },
+      { key: "email", label: "Email" },
+      { key: "loginEnabled", label: "Login", render: (row) => row.loginEnabled ? "Enabled" : row.membershipStatus === "SUSPENDED" ? "Disabled" : "Profile only" },
+      { key: "specialization", label: "Specialization" },
+      { key: "status", label: "Status" }
+    ]
   },
   parents: {
     moduleId: "parents",
@@ -239,14 +248,17 @@ const resourceConfigs: Record<Exclude<ModuleId, "dashboard" | "admissions" | "at
     fields: [
       { name: "name", label: "Parent/guardian name", required: true },
       { name: "email", label: "Email", required: true },
+      { name: "phone", label: "Phone" },
       { name: "studentId", label: "Link child", type: "select" },
       { name: "relationType", label: "Relation", type: "select", options: relationOptions },
       { name: "isEmergencyContact", label: "Emergency contact", type: "checkbox" },
-      { name: "loginEnabled", label: "Login enabled", type: "checkbox" }
+      { name: "loginEnabled", label: "Login enabled", type: "checkbox" },
+      { name: "password", label: "Temporary/reset password", type: "password", placeholder: "Minimum 8 characters" }
     ],
     columns: [
       { key: "name", label: "Name" },
       { key: "email", label: "Email" },
+      { key: "phone", label: "Phone" },
       { key: "loginEnabled", label: "Login", render: (row) => row.loginEnabled ? "Enabled" : "Disabled" },
       { key: "links", label: "Linked children", render: (row) => Array.isArray(row.links) && row.links.length ? row.links.map((link: any) => `${link.student?.name ?? "Student"} (${humanize(link.relationType)})`).join(", ") : "None" }
     ]
@@ -492,8 +504,8 @@ function SetupCoach({ dashboard, readiness, onOpenModule }: { dashboard: ReturnT
     { label: "Create classes 1-12", done: flags?.hasClass ?? dashboard.metrics.classes > 0, count: readiness?.counts?.classes ?? dashboard.metrics.classes, moduleId: "classes" as ModuleId, action: "Open classes" },
     { label: "Create sections", done: flags?.hasSection ?? dashboard.metrics.sections > 0, count: readiness?.counts?.sections ?? dashboard.metrics.sections, moduleId: "sections" as ModuleId, action: "Open sections" },
     { label: "Create subjects", done: flags?.hasSubject ?? dashboard.metrics.subjects > 0, count: readiness?.counts?.subjects ?? dashboard.metrics.subjects, moduleId: "subjects" as ModuleId, action: "Open subjects" },
-    { label: "Create teachers in next phase", done: flags?.hasTeacher ?? dashboard.metrics.teachers > 0, count: readiness?.counts?.teachers ?? dashboard.metrics.teachers, moduleId: "teachers" as ModuleId, action: "Open teachers" },
-    { label: "Assign teachers after setup", done: flags?.hasTeacherAssignment ?? false, count: readiness?.counts?.teacherAssignments ?? 0, moduleId: "teachers" as ModuleId, action: "Open assignments" }
+    { label: "Create teachers", done: flags?.hasTeacher ?? dashboard.metrics.teachers > 0, count: readiness?.counts?.teachers ?? dashboard.metrics.teachers, moduleId: "teachers" as ModuleId, action: "Open teachers" },
+    { label: "Assign teachers", done: flags?.hasTeacherAssignment ?? false, count: readiness?.counts?.teacherAssignments ?? 0, moduleId: "teachers" as ModuleId, action: "Open assignments" }
   ] as const;
   const complete = steps.filter((step) => step.done).length;
 
@@ -698,7 +710,7 @@ function ResourceForm({ config, editing, onCancel, onSaved }: { config: Resource
     });
     setForm(next);
     setMessage(null);
-  }, [config, editing]);
+  }, [config.resource, editing]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -729,11 +741,16 @@ function ResourceForm({ config, editing, onCancel, onSaved }: { config: Resource
       <div className="border-b border-border pb-3">
         <h3 className="text-base font-semibold">{editing ? `Edit ${config.title}` : config.submitLabel}</h3>
         <p className="mt-1 text-sm text-muted-foreground">School scoped. Required fields are validated before saving.</p>
+        {config.resource === "teachers" || config.resource === "parents" ? (
+          <p className="mt-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs leading-5 text-warning">
+            When login is enabled for a new account, enter a temporary password. Share it securely and ask the user to change it later.
+          </p>
+        ) : null}
       </div>
       {message ? <div className={`mt-4 rounded-md border p-3 text-sm ${message.tone === "success" ? "border-success/30 bg-success/10 text-success" : "border-error/30 bg-error/10 text-error"}`}>{message.text}</div> : null}
       <div className="mt-4 grid gap-3">
         {config.fields.map((field) => {
-          const dynamicOptions = field.name === "classId" ? classes.map((row) => ({ value: row.id, label: optionLabelForClass(row) })) : field.name === "className" ? classes.map((row) => ({ value: row.name, label: optionLabelForClass(row) })) : field.name === "studentId" ? [{ value: "", label: "No child yet" }, ...students.map((row) => ({ value: row.id, label: `${row.name} (${row.admissionNumber ?? "No admission #"} )` }))] : field.options;
+          const dynamicOptions = field.name === "classId" ? classes.map((row) => ({ value: row.id, label: optionLabelForClass(row) })) : field.name === "className" ? classes.map((row) => ({ value: row.name, label: optionLabelForClass(row) })) : field.name === "studentId" ? [{ value: "", label: "No child yet" }, ...students.map((row) => ({ value: row.id, label: optionLabelForStudent(row) }))] : field.options;
           return <FieldControl key={field.name} field={{ ...field, type: dynamicOptions?.length ? "select" : field.type, options: dynamicOptions }} value={form[field.name]} onChange={(value) => setForm((current) => ({ ...current, [field.name]: value }))} />;
         })}
       </div>
@@ -903,7 +920,7 @@ function ParentLinking({ rows, onChanged }: { rows: ResourceRow[]; onChanged: ()
         </select>
         <select className="min-h-10 rounded-md border border-border bg-background px-3 text-sm lg:col-span-2" required value={studentId} onChange={(event) => setStudentId(event.target.value)}>
           <option value="">Select student</option>
-          {students.map((row) => <option key={row.id} value={row.id}>{row.name} - {row.admissionNumber}</option>)}
+          {students.map((row) => <option key={row.id} value={row.id}>{optionLabelForStudent(row)}</option>)}
         </select>
         <select className="min-h-10 rounded-md border border-border bg-background px-3 text-sm" value={relationType} onChange={(event) => setRelationType(event.target.value)}>
           {relationOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
@@ -1045,6 +1062,14 @@ function optionLabelForSubject(row: ResourceRow) {
   const code = row.code ? ` (${row.code})` : "";
   const status = row.status ? ` - ${humanize(row.status)}` : "";
   return `${name}${code}${status}`;
+}
+
+function optionLabelForStudent(row: ResourceRow) {
+  const name = row.name ?? "Student";
+  const admission = row.admissionNumber ? `Admission ${row.admissionNumber}` : "No admission #";
+  const className = row.className ? ` - ${row.className}` : "";
+  const status = row.status ? ` - ${humanize(row.status)}` : "";
+  return `${name} (${admission})${className}${status}`;
 }
 
 function useDashboard(refreshKey: number) {

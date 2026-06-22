@@ -37,7 +37,9 @@ const relationTypeSchema = z.enum(["FATHER", "MOTHER", "GUARDIAN", "OTHER"]);
 const parentCreateSchema = z.object({
   name: z.string().trim().min(2),
   email: z.string().trim().email().transform((value) => value.toLowerCase()),
+  phone: z.string().trim().optional(),
   loginEnabled: z.boolean().default(false),
+  password: z.string().trim().min(8).optional(),
   studentId: z.string().trim().min(1).optional(),
   relationType: relationTypeSchema.default("GUARDIAN"),
   isEmergencyContact: z.boolean().default(false)
@@ -46,7 +48,20 @@ const parentCreateSchema = z.object({
 const parentUpdateSchema = z.object({
   name: z.string().trim().min(2).optional(),
   email: z.string().trim().email().transform((value) => value.toLowerCase()).optional(),
+  phone: z.string().trim().optional(),
+  password: z.string().trim().min(8).optional(),
   loginEnabled: z.boolean().optional()
+});
+
+const teacherProfileSchema = z.object({
+  employeeNumber: z.string().min(1),
+  name: z.string().min(2),
+  email: z.string().email().transform((value) => value.toLowerCase()),
+  phone: z.string().optional(),
+  specialization: z.string().optional(),
+  status: z.string().default("ACTIVE"),
+  loginEnabled: z.boolean().default(false),
+  password: z.string().trim().min(8).optional()
 });
 
 const parentLinkSchema = z.object({
@@ -88,7 +103,7 @@ const schemas: Record<Resource, z.ZodTypeAny> = {
   classes: z.object({ name: z.string().min(1), code: z.string().min(1), status: z.string().default("ACTIVE") }),
   sections: z.object({ classId: z.string().min(1), name: z.string().min(1), capacity: z.coerce.number().int().min(1).default(40), status: z.string().default("ACTIVE") }),
   subjects: z.object({ name: z.string().min(1), code: z.string().min(1), type: z.string().default("CORE"), status: z.string().default("ACTIVE") }),
-  teachers: z.object({ employeeNumber: z.string().min(1), name: z.string().min(2), email: z.string().email(), phone: z.string().optional(), specialization: z.string().optional(), status: z.string().default("ACTIVE") }),
+  teachers: teacherProfileSchema,
   students: z.object({ admissionNumber: z.string().min(1), name: z.string().min(2), guardianName: z.string().min(2), guardianPhone: z.string().min(2), className: z.string().min(1), status: z.string().default("ACTIVE") }),
   fees: z.object({ title: z.string().min(2), amount: z.coerce.number().int().min(0), dueDate: z.coerce.date(), status: z.string().default("PENDING") }),
   exams: z.object({ name: z.string().min(2), subject: z.string().min(1), examDate: z.coerce.date(), status: z.string().default("SCHEDULED") }),
@@ -323,17 +338,25 @@ router.post("/parents", async (req, res, next) => {
     const data = parentCreateSchema.parse(req.body);
     const role = await prisma.role.findUnique({ where: { code: "PARENT" } });
     if (!role) return fail(res, 500, "VALIDATION_ERROR", "Parent role is not configured.");
+    if (data.loginEnabled && !data.password) {
+      const existingUser = await prisma.user.findUnique({ where: { email: data.email } });
+      if (!existingUser) return fail(res, 400, "VALIDATION_ERROR", "A temporary password is required when login is enabled for a new parent account.");
+    }
     if (data.studentId) {
       const student = await prisma.studentProfile.findFirst({ where: { id: data.studentId, schoolId } });
       if (!student) return fail(res, 404, "NOT_FOUND", "Student not found for this school.");
     }
     const row = await prisma.$transaction(async (tx) => {
-      const passwordHash = await bcrypt.hash(crypto.randomBytes(24).toString("base64url"), 12);
+      const existingUser = await tx.user.findUnique({ where: { email: data.email } });
+      const passwordHash = data.password ? await bcrypt.hash(data.password, 12) : await bcrypt.hash(crypto.randomBytes(24).toString("base64url"), 12);
       const user = await tx.user.upsert({
         where: { email: data.email },
-        update: { name: data.name, isActive: data.loginEnabled },
+        update: { name: data.name, isActive: data.loginEnabled, ...(data.password ? { passwordHash } : {}) },
         create: { email: data.email, name: data.name, passwordHash, isActive: data.loginEnabled }
       });
+      if (existingUser && data.password) {
+        await tx.session.updateMany({ where: { userId: user.id, status: "ACTIVE" }, data: { status: "REVOKED", revokedAt: new Date() } });
+      }
       const membership = await tx.schoolMembership.upsert({
         where: { userId_schoolId_roleId: { userId: user.id, schoolId, roleId: role.id } },
         update: { status: data.loginEnabled ? "ACTIVE" : "INVITED" },
@@ -355,7 +378,7 @@ router.post("/parents", async (req, res, next) => {
       }
       return tx.schoolMembership.findUniqueOrThrow({ where: { id: membership.id }, include: { user: true } });
     });
-    await writeAudit(req, "CREATE", "parents", row.userId, { email: data.email, studentId: data.studentId ?? null });
+    await writeAudit(req, "CREATE", "parents", row.userId, { email: data.email, phone: data.phone ?? null, studentId: data.studentId ?? null, loginEnabled: data.loginEnabled, passwordSet: Boolean(data.password) });
     return ok(res, serializeParentMembership(row), 201);
   } catch (error) {
     if (isUniqueError(error)) return fail(res, 409, "CONFLICT", "A parent account with this email or link already exists.");
@@ -380,10 +403,14 @@ router.patch("/parents/:parentId", async (req, res, next) => {
       data: {
         ...(data.name ? { name: data.name } : {}),
         ...(data.email ? { email: data.email } : {}),
+        ...(data.password ? { passwordHash: await bcrypt.hash(data.password, 12) } : {}),
         ...(typeof data.loginEnabled === "boolean" ? { isActive: data.loginEnabled } : {})
       },
       select: { id: true, name: true, email: true, isActive: true }
     });
+    if (data.password) {
+      await prisma.session.updateMany({ where: { userId: parentId, status: "ACTIVE" }, data: { status: "REVOKED", revokedAt: new Date() } });
+    }
     if (typeof data.loginEnabled === "boolean") {
       await prisma.$transaction([
         prisma.schoolMembership.update({ where: { id: membership.id }, data: { status: data.loginEnabled ? "ACTIVE" : "SUSPENDED" } }),
@@ -475,11 +502,12 @@ async function listSchoolResource(req: Request, res: Response, next: (error?: un
       delegate.findMany({ where, ...includeFor(resource), orderBy: { createdAt: "desc" }, skip: (query.page - 1) * query.pageSize, take: query.pageSize }),
       delegate.count({ where })
     ]);
+    const outputRows = resource === "teachers" ? await attachTeacherLoginState(rows, schoolId) : rows;
     if (query.format === "csv") {
       await writeAudit(req, "EXPORT", resource, "csv", { search: query.search, status: query.status });
-      return csv(res, `${resource}.csv`, rows, columnsByResource[resource]);
+      return csv(res, `${resource}.csv`, outputRows, columnsByResource[resource]);
     }
-    return paginated(res, rows, query.page, query.pageSize, total);
+    return paginated(res, outputRows, query.page, query.pageSize, total);
   } catch (error) {
     if (resource === "teacher-assignments" && isMissingTableError(error)) {
       return paginated(res, [], 1, pageQuerySchema.parse(req.query).pageSize, 0);
@@ -494,6 +522,9 @@ async function createSchoolResource(req: Request, res: Response, next: (error?: 
     if (!schoolId) return;
     const delegate = prismaDelegate(resource);
     const data = schemas[resource].parse(req.body) as Record<string, any>;
+    if (resource === "teachers") {
+      return createTeacherProfile(req, res, schoolId, data);
+    }
     const guard = await validateSchoolReferences(resource, schoolId, data);
     if (guard) return guard(res);
     if (resource === "academic-years" && data.status === "ACTIVE") {
@@ -520,6 +551,9 @@ async function updateSchoolResource(req: Request, res: Response, next: (error?: 
     if (!schoolId) return;
     const delegate = prismaDelegate(resource);
     const data = (schemas[resource] as any).partial().parse(req.body) as Record<string, any>;
+    if (resource === "teachers") {
+      return updateTeacherProfile(req, res, schoolId, routeId(req), data);
+    }
     await ensureOwnRecord(delegate, routeId(req), schoolId);
     const guard = await validateSchoolReferences(resource, schoolId, data);
     if (guard) return guard(res);
@@ -538,6 +572,103 @@ async function updateSchoolResource(req: Request, res: Response, next: (error?: 
     if (resource === "teacher-assignments" && isMissingTableError(error)) return fail(res, 503, "INTERNAL_ERROR", "Teacher assignments require the pending Phase 32D migration before this workflow can be used.");
     next(error);
   }
+}
+
+async function createTeacherProfile(req: Request, res: Response, schoolId: string, data: Record<string, any>) {
+  if (data.loginEnabled && !data.password) {
+    const existingUser = await prisma.user.findUnique({ where: { email: data.email } });
+    if (!existingUser) return fail(res, 400, "VALIDATION_ERROR", "A temporary password is required when login is enabled for a new teacher account.");
+  }
+  const role = data.loginEnabled ? await prisma.role.findUnique({ where: { code: "TEACHER" } }) : null;
+  if (data.loginEnabled && !role) return fail(res, 500, "VALIDATION_ERROR", "Teacher role is not configured.");
+  const profileData = teacherProfileData(data);
+  const row = await prisma.$transaction(async (tx) => {
+    let userId: string | null = null;
+    if (data.loginEnabled) {
+      const existingUser = await tx.user.findUnique({ where: { email: data.email } });
+      const passwordHash = data.password ? await bcrypt.hash(data.password, 12) : await bcrypt.hash(crypto.randomBytes(24).toString("base64url"), 12);
+      const user = await tx.user.upsert({
+        where: { email: data.email },
+        update: { name: data.name, isActive: true, ...(data.password ? { passwordHash } : {}) },
+        create: { email: data.email, name: data.name, passwordHash, isActive: true }
+      });
+      userId = user.id;
+      if (existingUser && data.password) {
+        await tx.session.updateMany({ where: { userId: user.id, status: "ACTIVE" }, data: { status: "REVOKED", revokedAt: new Date() } });
+      }
+      await tx.schoolMembership.upsert({
+        where: { userId_schoolId_roleId: { userId: user.id, schoolId, roleId: role!.id } },
+        update: { status: "ACTIVE" },
+        create: { userId: user.id, schoolId, roleId: role!.id, status: "ACTIVE" }
+      });
+    }
+    const profile = await tx.teacherProfile.create({ data: { ...profileData, schoolId } });
+    return { ...profile, loginEnabled: Boolean(userId), userId };
+  });
+  await writeAudit(req, "CREATE", "teachers", row.id, { email: data.email, loginEnabled: Boolean(data.loginEnabled), passwordSet: Boolean(data.password) });
+  return ok(res, row, 201);
+}
+
+async function attachTeacherLoginState(rows: any[], schoolId: string) {
+  const emails = rows.map((row) => row.email).filter(Boolean);
+  if (emails.length === 0) return rows;
+  const memberships = await prisma.schoolMembership.findMany({
+    where: { schoolId, role: { code: "TEACHER" }, user: { email: { in: emails } } },
+    include: { user: { select: { id: true, email: true, isActive: true } } }
+  });
+  const byEmail = new Map(memberships.map((membership: any) => [membership.user.email, membership]));
+  return rows.map((row) => {
+    const membership = byEmail.get(row.email);
+    return {
+      ...row,
+      userId: membership?.userId ?? null,
+      loginEnabled: Boolean(membership?.user?.isActive && membership.status === "ACTIVE"),
+      membershipStatus: membership?.status ?? null
+    };
+  });
+}
+
+async function updateTeacherProfile(req: Request, res: Response, schoolId: string, id: string, data: Record<string, any>) {
+  const existing = await prisma.teacherProfile.findFirst({ where: { id, schoolId } });
+  if (!existing) return fail(res, 404, "NOT_FOUND", "Teacher not found for this school.");
+  const nextEmail = data.email ?? existing.email;
+  const nextName = data.name ?? existing.name;
+  const role = typeof data.loginEnabled === "boolean" || data.password ? await prisma.role.findUnique({ where: { code: "TEACHER" } }) : null;
+  if ((typeof data.loginEnabled === "boolean" || data.password) && !role) return fail(res, 500, "VALIDATION_ERROR", "Teacher role is not configured.");
+  const profileData = teacherProfileData(data);
+  const row = await prisma.$transaction(async (tx) => {
+    let userId: string | null = null;
+    if (typeof data.loginEnabled === "boolean" || data.password) {
+      const existingUser = await tx.user.findUnique({ where: { email: nextEmail } });
+      if (data.loginEnabled && !existingUser && !data.password) {
+        throw Object.assign(new Error("A temporary password is required when enabling login for a new teacher account."), { statusCode: 400 });
+      }
+      const passwordHash = data.password ? await bcrypt.hash(data.password, 12) : await bcrypt.hash(crypto.randomBytes(24).toString("base64url"), 12);
+      const user = await tx.user.upsert({
+        where: { email: nextEmail },
+        update: { name: nextName, ...(typeof data.loginEnabled === "boolean" ? { isActive: data.loginEnabled } : {}), ...(data.password ? { passwordHash } : {}) },
+        create: { email: nextEmail, name: nextName, passwordHash, isActive: data.loginEnabled ?? true }
+      });
+      userId = user.id;
+      if (data.password) {
+        await tx.session.updateMany({ where: { userId: user.id, status: "ACTIVE" }, data: { status: "REVOKED", revokedAt: new Date() } });
+      }
+      await tx.schoolMembership.upsert({
+        where: { userId_schoolId_roleId: { userId: user.id, schoolId, roleId: role!.id } },
+        update: { status: data.loginEnabled === false ? "SUSPENDED" : "ACTIVE" },
+        create: { userId: user.id, schoolId, roleId: role!.id, status: data.loginEnabled === false ? "SUSPENDED" : "ACTIVE" }
+      });
+    }
+    const profile = await tx.teacherProfile.update({ where: { id }, data: profileData });
+    return { ...profile, ...(userId ? { userId } : {}) };
+  });
+  await writeAudit(req, "UPDATE", "teachers", row.id, { ...profileData, loginEnabled: data.loginEnabled, passwordSet: Boolean(data.password) });
+  return ok(res, row);
+}
+
+function teacherProfileData(data: Record<string, any>) {
+  const { loginEnabled: _loginEnabled, password: _password, ...profileData } = data;
+  return profileData;
 }
 
 router.delete("/:resource/:id", async (req, res, next) => {
@@ -566,21 +697,24 @@ function leaveRequestInclude() {
 }
 
 function serializeParentMembership(row: any) {
+  const links = Array.isArray(row.user.guardianStudentLinks) ? row.user.guardianStudentLinks.map((link: any) => ({
+    id: link.id,
+    relationType: link.relationType,
+    isEmergencyContact: link.isEmergencyContact,
+    canLogin: link.canLogin,
+    status: link.status,
+    student: link.student ?? null
+  })) : [];
+  const linkedPhone = links.find((link: any) => link.student?.guardianPhone)?.student?.guardianPhone ?? null;
   return {
     id: row.user.id,
     membershipId: row.id,
     name: row.user.name,
     email: row.user.email,
+    phone: linkedPhone,
     loginEnabled: Boolean(row.user.isActive && row.status === "ACTIVE"),
     membershipStatus: row.status,
-    links: Array.isArray(row.user.guardianStudentLinks) ? row.user.guardianStudentLinks.map((link: any) => ({
-      id: link.id,
-      relationType: link.relationType,
-      isEmergencyContact: link.isEmergencyContact,
-      canLogin: link.canLogin,
-      status: link.status,
-      student: link.student ?? null
-    })) : []
+    links
   };
 }
 
@@ -597,7 +731,7 @@ async function listParentMemberships(where: any, schoolId: string, page: number,
             isActive: true,
             guardianStudentLinks: {
               where: { schoolId },
-              include: { student: { select: { id: true, admissionNumber: true, name: true, className: true, status: true } } },
+              include: { student: { select: { id: true, admissionNumber: true, name: true, className: true, guardianPhone: true, status: true } } },
               orderBy: { createdAt: "desc" }
             }
           }
