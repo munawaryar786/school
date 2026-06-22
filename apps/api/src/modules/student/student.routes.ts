@@ -118,6 +118,19 @@ router.get("/dashboard", async (req, res, next) => {
   }
 });
 
+router.get("/timetable", async (req, res, next) => {
+  try {
+    const scope = await requireStudentScope(req, res);
+    if (!scope) return;
+    const rows = await prisma.timetableSlot.findMany({
+      where: { schoolId: scope.schoolId, className: scope.className, status: "ACTIVE" },
+      orderBy: [{ dayOfWeek: "asc" }, { startsAt: "asc" }]
+    });
+    return ok(res, rows);
+  } catch (error) {
+    next(error);
+  }
+});
 router.get("/:resource", async (req, res, next) => {
   try {
     const resource = parseResource(req, res);
@@ -322,3 +335,4 @@ async function writeAudit(req: Request, action: Parameters<AuditService["record"
 }
 
 export { router as studentRoutes };
+

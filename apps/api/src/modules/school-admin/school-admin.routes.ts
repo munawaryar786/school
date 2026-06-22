@@ -118,6 +118,25 @@ const attendanceQuerySchema = z.object({
   status: z.string().trim().optional(),
   search: z.string().trim().optional()
 });
+const timetableQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(100),
+  className: z.string().trim().optional(),
+  teacher: z.string().trim().optional(),
+  dayOfWeek: z.string().trim().optional(),
+  status: z.string().trim().optional(),
+  search: z.string().trim().optional()
+});
+
+const timetableSlotSchema = z.object({
+  className: z.string().trim().min(1),
+  subject: z.string().trim().min(1),
+  teacher: z.string().trim().min(1),
+  dayOfWeek: z.string().trim().min(1),
+  startsAt: z.string().trim().min(1),
+  endsAt: z.string().trim().min(1),
+  status: z.string().trim().default("ACTIVE")
+});
 
 type Resource =
   | "academic-years"
@@ -534,6 +553,70 @@ router.get("/attendance/summary", async (req, res, next) => {
   }
 });
 
+router.get("/timetable", async (req, res, next) => {
+  try {
+    const schoolId = requireSchool(req, res);
+    if (!schoolId) return;
+    const query = timetableQuerySchema.parse(req.query);
+    const where = buildTimetableWhere(schoolId, query);
+    const [rows, total] = await Promise.all([
+      prisma.timetableSlot.findMany({ where, orderBy: timetableOrderBy(), skip: (query.page - 1) * query.pageSize, take: query.pageSize }),
+      prisma.timetableSlot.count({ where })
+    ]);
+    return paginated(res, rows, query.page, query.pageSize, total);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/timetable", async (req, res, next) => {
+  try {
+    const schoolId = requireSchool(req, res);
+    if (!schoolId) return;
+    const input = timetableSlotSchema.parse(req.body);
+    const data = await normalizeTimetableInput(schoolId, input, res);
+    if (!data) return;
+    const warnings = await timetableConflictWarnings(schoolId, data);
+    const row = await prisma.timetableSlot.create({ data: { schoolId, ...data } });
+    await writeAudit(req, "CREATE", "timetable", row.id, { className: row.className, teacher: row.teacher, dayOfWeek: row.dayOfWeek });
+    return ok(res, { ...row, warnings }, 201);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.patch("/timetable/:id", async (req, res, next) => {
+  try {
+    const schoolId = requireSchool(req, res);
+    if (!schoolId) return;
+    const existing = await prisma.timetableSlot.findFirst({ where: { id: routeId(req), schoolId } });
+    if (!existing) return fail(res, 404, "NOT_FOUND", "Timetable slot not found for this school.");
+    const input = timetableSlotSchema.partial().parse(req.body);
+    const merged = { ...existing, ...input };
+    const data = await normalizeTimetableInput(schoolId, merged, res);
+    if (!data) return;
+    const warnings = await timetableConflictWarnings(schoolId, data, existing.id);
+    const row = await prisma.timetableSlot.update({ where: { id: existing.id }, data });
+    await writeAudit(req, "UPDATE", "timetable", row.id, { className: row.className, teacher: row.teacher, dayOfWeek: row.dayOfWeek });
+    return ok(res, { ...row, warnings });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.delete("/timetable/:id", async (req, res, next) => {
+  try {
+    const schoolId = requireSchool(req, res);
+    if (!schoolId) return;
+    const existing = await prisma.timetableSlot.findFirst({ where: { id: routeId(req), schoolId } });
+    if (!existing) return fail(res, 404, "NOT_FOUND", "Timetable slot not found for this school.");
+    await prisma.timetableSlot.delete({ where: { id: existing.id } });
+    await writeAudit(req, "DELETE", "timetable", existing.id, { className: existing.className, teacher: existing.teacher });
+    return ok(res, { deleted: true });
+  } catch (error) {
+    next(error);
+  }
+});
 router.patch("/leave-requests/:id/review", async (req, res, next) => {
   try {
     const schoolId = requireSchool(req, res);
@@ -1154,6 +1237,83 @@ function buildAttendanceWhere(schoolId: string, query: { date?: Date; className?
   return where;
 }
 
+
+function buildTimetableWhere(schoolId: string, query: { className?: string; teacher?: string; dayOfWeek?: string; status?: string; search?: string }) {
+  const where: any = { schoolId };
+  if (query.className) where.className = query.className;
+  if (query.teacher) where.teacher = query.teacher;
+  if (query.dayOfWeek) where.dayOfWeek = query.dayOfWeek.toUpperCase();
+  if (query.status) where.status = query.status;
+  if (query.search) {
+    where.OR = ["className", "subject", "teacher", "dayOfWeek"].map((field) => ({ [field]: { contains: query.search, mode: "insensitive" } }));
+  }
+  return where;
+}
+
+function timetableOrderBy() {
+  return [{ dayOfWeek: "asc" }, { startsAt: "asc" }];
+}
+
+async function normalizeTimetableInput(schoolId: string, input: Record<string, any>, res: Response) {
+  if (!isTimeRangeValid(input.startsAt, input.endsAt)) {
+    fail(res, 400, "VALIDATION_ERROR", "End time must be after start time.");
+    return null;
+  }
+  const classRow = await prisma.classLevel.findFirst({
+    where: { schoolId, OR: [{ id: input.className }, { name: { equals: input.className, mode: "insensitive" } }, { code: { equals: input.className, mode: "insensitive" } }] },
+    select: { name: true }
+  });
+  if (!classRow) {
+    fail(res, 404, "NOT_FOUND", "Class not found for this school.");
+    return null;
+  }
+  const subjectRow = await prisma.subject.findFirst({
+    where: { schoolId, OR: [{ id: input.subject }, { name: { equals: input.subject, mode: "insensitive" } }, { code: { equals: input.subject, mode: "insensitive" } }] },
+    select: { name: true }
+  });
+  if (!subjectRow) {
+    fail(res, 404, "NOT_FOUND", "Subject not found for this school.");
+    return null;
+  }
+  const teacherRow = await prisma.teacherProfile.findFirst({
+    where: { schoolId, OR: [{ id: input.teacher }, { name: { equals: input.teacher, mode: "insensitive" } }, { email: { equals: input.teacher, mode: "insensitive" } }] },
+    select: { name: true }
+  });
+  if (!teacherRow) {
+    fail(res, 404, "NOT_FOUND", "Teacher not found for this school.");
+    return null;
+  }
+  return {
+    className: classRow.name,
+    subject: subjectRow.name,
+    teacher: teacherRow.name,
+    dayOfWeek: String(input.dayOfWeek).toUpperCase(),
+    startsAt: input.startsAt,
+    endsAt: input.endsAt,
+    status: input.status ?? "ACTIVE"
+  };
+}
+
+function isTimeRangeValid(startsAt: string, endsAt: string) {
+  return /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(startsAt) && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(endsAt) && startsAt < endsAt;
+}
+
+async function timetableConflictWarnings(schoolId: string, data: Record<string, string>, excludeId?: string) {
+  const rows = await prisma.timetableSlot.findMany({
+    where: {
+      schoolId,
+      dayOfWeek: data.dayOfWeek,
+      status: "ACTIVE",
+      ...(excludeId ? { id: { not: excludeId } } : {}),
+      OR: [{ teacher: data.teacher }, { className: data.className }]
+    },
+    select: { id: true, className: true, teacher: true, startsAt: true, endsAt: true }
+  });
+  return rows
+    .filter((row) => data.startsAt < row.endsAt && data.endsAt > row.startsAt)
+    .map((row) => row.teacher === data.teacher ? "Teacher already has a timetable slot that overlaps this time." : "Class already has a timetable slot that overlaps this time.");
+}
+
 function attendanceDateWhere(value: Date) {
   const start = new Date(value);
   start.setHours(0, 0, 0, 0);
@@ -1250,3 +1410,7 @@ async function writeAudit(req: Request, action: Parameters<AuditService["record"
 }
 
 export { router as schoolAdminRoutes };
+
+
+
+

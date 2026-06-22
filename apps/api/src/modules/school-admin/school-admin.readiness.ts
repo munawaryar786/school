@@ -27,6 +27,7 @@ export async function buildSchoolReadiness(schoolId: string) {
     parentChildLinks,
     leaveRequests,
     attendanceRecords,
+    timetableSlots,
     examRecords,
     feeRecords,
     libraryBooks,
@@ -45,13 +46,14 @@ export async function buildSchoolReadiness(schoolId: string) {
     safeCount(() => db.guardianStudentLink.count({ where: { schoolId, status: "ACTIVE" } })),
     safeCount(() => db.leaveRequest.count({ where: { schoolId } })),
     db.teacherAttendance.count({ where: { schoolId } }),
+    db.timetableSlot.count({ where: { schoolId } }),
     db.examRecord.count({ where: { schoolId } }),
     db.feeRecord.count({ where: { schoolId } }),
     db.libraryBook.count({ where: { schoolId } }),
     db.lmsProgress.count({ where: { schoolId } })
   ]);
 
-  const counts = { academicYears, activeAcademicYears, classes, sections, subjects, admissions, students, teachers, teacherAssignments, parentGuardians, parentChildLinks, leaveRequests, attendanceRecords, examRecords, feeRecords, libraryBooks, lmsProgress };
+  const counts = { academicYears, activeAcademicYears, classes, sections, subjects, admissions, students, teachers, teacherAssignments, parentGuardians, parentChildLinks, leaveRequests, attendanceRecords, timetableSlots, examRecords, feeRecords, libraryBooks, lmsProgress };
   const flags = {
     hasAcademicYear: academicYears > 0,
     hasActiveAcademicYear: activeAcademicYears > 0,
@@ -63,6 +65,7 @@ export async function buildSchoolReadiness(schoolId: string) {
     hasTeacher: teachers > 0,
     hasTeacherAssignment: teacherAssignments > 0,
     hasAttendance: attendanceRecords > 0,
+    hasTimetable: timetableSlots > 0,
     hasParentGuardian: parentGuardians > 0,
     hasParentChildLink: parentChildLinks > 0
   };
@@ -96,7 +99,7 @@ function buildModuleRules(flags: Record<string, boolean>, counts: Record<string,
     parents: { label: "Parents/Guardians", ready: flags.hasParentChildLink, dependencies: [["Parent/guardian", flags.hasParentGuardian], ["Parent-child link", flags.hasParentChildLink]], nextAction: flags.hasParentGuardian ? "Link parents to students" : "Create a parent or guardian" },
     "teacher-assignments": { label: "Teacher Assignments", ready: flags.hasTeacherAssignment, dependencies: [["Teacher", flags.hasTeacher], ["Class", flags.hasClass], ["Subject", flags.hasSubject], ["Teacher assignment", flags.hasTeacherAssignment]], nextAction: flags.hasTeacher && flags.hasClass && flags.hasSubject ? "Create a teacher assignment" : "Create teacher, class, and subject first" },
     attendance: { label: "Attendance", ready: flags.hasActiveAcademicYear && flags.hasClass && flags.hasSection && flags.hasStudent && flags.hasTeacherAssignment, dependencies: [["Active academic year", flags.hasActiveAcademicYear], ["Class", flags.hasClass], ["Section", flags.hasSection], ["Student", flags.hasStudent], ["Teacher assignment", flags.hasTeacherAssignment]], nextAction: flags.hasTeacherAssignment ? "Mark class attendance from the teacher portal" : "Complete academic setup, students, and teacher assignments" },
-    timetable: { label: "Timetable", ready: flags.hasActiveAcademicYear && flags.hasClass && flags.hasSection && flags.hasSubject && flags.hasTeacherAssignment, dependencies: [["Active academic year", flags.hasActiveAcademicYear], ["Class", flags.hasClass], ["Section", flags.hasSection], ["Subject", flags.hasSubject], ["Teacher assignment", flags.hasTeacherAssignment]], nextAction: "Complete academic setup and teacher assignments" },
+    timetable: { label: "Timetable", ready: flags.hasActiveAcademicYear && flags.hasClass && flags.hasSection && flags.hasSubject && flags.hasTeacherAssignment && flags.hasTimetable, dependencies: [["Active academic year", flags.hasActiveAcademicYear], ["Class", flags.hasClass], ["Section", flags.hasSection], ["Subject", flags.hasSubject], ["Teacher assignment", flags.hasTeacherAssignment], ["Timetable slot", flags.hasTimetable]], nextAction: flags.hasTeacherAssignment ? "Create timetable slots" : "Complete academic setup and teacher assignments" },
     exams: { label: "Exams/Results", ready: flags.hasActiveAcademicYear && flags.hasClass && flags.hasSection && flags.hasSubject && flags.hasStudent, dependencies: [["Active academic year", flags.hasActiveAcademicYear], ["Class", flags.hasClass], ["Section", flags.hasSection], ["Subject", flags.hasSubject], ["Student", flags.hasStudent]], nextAction: "Complete academic setup and student profiles" },
     fees: { label: "Fees/Finance", ready: flags.hasStudent && counts.feeRecords > 0, dependencies: [["Student", flags.hasStudent], ["Fee records", counts.feeRecords > 0]], nextAction: flags.hasStudent ? "Open fee setup in a later phase" : "Create student profiles first" },
     library: { label: "Library", ready: flags.hasStudent && counts.libraryBooks > 0, dependencies: [["Student", flags.hasStudent], ["Library catalog", counts.libraryBooks > 0]], nextAction: flags.hasStudent ? "Open library catalog in a later phase" : "Create student profiles first" },
@@ -122,3 +125,6 @@ async function safeCount(count: () => Promise<number>) {
 function isMissingTableError(error: unknown) {
   return error instanceof Error && ((error as any).code === "P2021" || (error as any).code === "P2022");
 }
+
+
+

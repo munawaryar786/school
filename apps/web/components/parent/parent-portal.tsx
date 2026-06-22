@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { AlertCircle, BookOpen, CalendarCheck, CheckCircle2, Clock3, FileText, GraduationCap, Library, MessageSquareText, RefreshCw, Send, Users, WalletCards } from "lucide-react";
+import { AlertCircle, BookOpen, CalendarCheck, CalendarDays, CheckCircle2, Clock3, FileText, GraduationCap, Library, MessageSquareText, RefreshCw, Send, Users, WalletCards } from "lucide-react";
 import { formatNumber } from "../../lib/super-admin-dashboard";
 
 type ApiOne<T> = { success: true; data: T };
@@ -52,6 +52,16 @@ type AttendanceRecord = {
   remarks?: string | null;
 };
 
+type TimetableRecord = {
+  id: string;
+  className: string;
+  subject: string;
+  teacher: string;
+  dayOfWeek: string;
+  startsAt: string;
+  endsAt: string;
+  status?: string | null;
+};
 type LeaveForm = {
   type: string;
   startDate: string;
@@ -90,6 +100,7 @@ export function ParentPortal() {
   const [summary, setSummary] = useState<ChildSummary | null>(null);
   const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>([]);
   const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>([]);
+  const [timetableRecords, setTimetableRecords] = useState<TimetableRecord[]>([]);
   const [form, setForm] = useState<LeaveForm>(emptyForm);
   const [loading, setLoading] = useState(true);
   const [childLoading, setChildLoading] = useState(false);
@@ -116,6 +127,7 @@ export function ParentPortal() {
       setSummary(null);
       setLeaveRequests([]);
       setAttendanceRecords([]);
+      setTimetableRecords([]);
       return;
     }
     setChildLoading(true);
@@ -123,12 +135,14 @@ export function ParentPortal() {
     Promise.all([
       api<ChildSummary>(`children/${selectedChildId}/summary`),
       api<LeaveRequest[]>(`children/${selectedChildId}/leave-requests`),
-      api<AttendanceRecord[]>("attendance?pageSize=100")
+      api<AttendanceRecord[]>("attendance?pageSize=100"),
+      api<TimetableRecord[]>("timetable?pageSize=100")
     ])
-      .then(([nextSummary, nextRequests, nextAttendance]) => {
+      .then(([nextSummary, nextRequests, nextAttendance, nextTimetable]) => {
         setSummary(nextSummary ?? null);
         setLeaveRequests(Array.isArray(nextRequests) ? nextRequests : []);
         setAttendanceRecords(Array.isArray(nextAttendance) ? nextAttendance.filter((row) => row.studentName === nextSummary?.child?.name).slice(0, 10) : []);
+        setTimetableRecords(Array.isArray(nextTimetable) ? nextTimetable.filter((row) => row.className === nextSummary?.child?.className).slice(0, 10) : []);
       })
       .catch((caught) => setError(caught instanceof Error ? caught.message : "Child dashboard could not load."))
       .finally(() => setChildLoading(false));
@@ -208,6 +222,7 @@ export function ParentPortal() {
           </section>
 
           <AttendanceRecords records={attendanceRecords} />
+          <TimetableRecords records={timetableRecords} />
 
           <section className="rounded-lg border border-border bg-surface p-4 shadow-panel">
             <div className="flex items-center gap-2">
@@ -301,6 +316,27 @@ function SummaryCard({ label, value, detail, icon: Icon }: { label: string; valu
   );
 }
 
+function TimetableRecords({ records }: { records: TimetableRecord[] }) {
+  return (
+    <section className="rounded-lg border border-border bg-surface p-4 shadow-panel">
+      <div className="flex items-center gap-2">
+        <CalendarDays aria-hidden={true} className="text-primary" size={18} />
+        <h2 className="text-base font-semibold">Class Timetable</h2>
+      </div>
+      {records.length === 0 ? <StatePanel text="No timetable slots have been created for this child yet." compact /> : (
+        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {records.map((record) => (
+            <article key={record.id} className="rounded-md border border-border bg-background p-3 text-sm">
+              <p className="font-semibold">{record.subject}</p>
+              <p className="mt-1 text-muted-foreground">{humanize(record.dayOfWeek)} - {record.startsAt} to {record.endsAt}</p>
+              <p className="mt-1 text-muted-foreground">Teacher: {record.teacher}</p>
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
 function LeaveRequestForm({ form, setForm, submitting, message, onSubmit }: { form: LeaveForm; setForm: React.Dispatch<React.SetStateAction<LeaveForm>>; submitting: boolean; message: { tone: "success" | "error"; text: string } | null; onSubmit: (event: React.FormEvent<HTMLFormElement>) => void }) {
   const update = (key: keyof LeaveForm, value: string) => setForm((current) => ({ ...current, [key]: value }));
   return (
@@ -433,3 +469,5 @@ function formatDateTime(value: string) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? "Not available" : new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(date);
 }
+
+

@@ -65,7 +65,7 @@ const createSchemas = {
   })
 } as const;
 
-type Resource = "children" | "attendance" | "results" | "performance" | "homework" | "fees" | "payments" | "communication";
+type Resource = "children" | "attendance" | "timetable" | "results" | "performance" | "homework" | "fees" | "payments" | "communication";
 type WritableResource = keyof typeof createSchemas;
 type ParentChild = {
   id: string;
@@ -87,11 +87,12 @@ type ParentScope = {
   classNames: string[];
 };
 
-const resources: Resource[] = ["children", "attendance", "results", "performance", "homework", "fees", "payments", "communication"];
+const resources: Resource[] = ["children", "attendance", "timetable", "results", "performance", "homework", "fees", "payments", "communication"];
 
 const columnsByResource: Record<Resource, string[]> = {
   children: ["id", "admissionNumber", "name", "guardianName", "guardianPhone", "className", "status"],
   attendance: ["id", "studentName", "className", "attendanceDate", "status", "remarks"],
+  timetable: ["id", "className", "subject", "teacher", "dayOfWeek", "startsAt", "endsAt", "status"],
   results: ["id", "studentName", "className", "subject", "assessment", "marksObtained", "maxMarks", "status"],
   performance: ["id", "studentName", "className", "attendanceRate", "averageScore", "homeworkOpen", "pendingFees", "paidPayments"],
   homework: ["id", "title", "className", "subject", "dueDate", "maxMarks", "status"],
@@ -402,6 +403,7 @@ async function listResource(resource: Resource, scope: ParentScope, search?: str
 
   const delegateByResource: Record<Exclude<Resource, "children" | "performance" | "communication">, any> = {
     attendance: prisma.teacherAttendance,
+    timetable: prisma.timetableSlot,
     results: prisma.teacherMark,
     homework: prisma.teacherAssignment,
     fees: prisma.feeRecord,
@@ -416,6 +418,8 @@ function whereFor(resource: Exclude<Resource, "children" | "performance">, scope
   switch (resource) {
     case "attendance":
       return { schoolId, studentName: { in: scope.childNames } };
+    case "timetable":
+      return { schoolId, className: { in: scope.classNames }, status: "ACTIVE" };
     case "results":
       return { schoolId, studentName: { in: scope.childNames } };
     case "homework":
@@ -479,6 +483,7 @@ function withSearch(where: any, search: string | undefined, status: string | und
   if (!search) return next;
   const searchFields: Partial<Record<Resource, string[]>> = {
     attendance: ["studentName", "className", "remarks"],
+    timetable: ["className", "subject", "teacher", "dayOfWeek"],
     results: ["studentName", "className", "subject", "assessment"],
     homework: ["title", "className", "subject"],
     fees: ["title"],
@@ -498,6 +503,7 @@ function filterRows<T extends Record<string, unknown>>(rows: T[], search: string
 
 function orderByFor(resource: Resource) {
   if (resource === "attendance") return { attendanceDate: "desc" };
+  if (resource === "timetable") return [{ dayOfWeek: "asc" }, { startsAt: "asc" }];
   if (resource === "results") return { createdAt: "desc" };
   if (resource === "homework") return { dueDate: "asc" };
   if (resource === "fees") return { dueDate: "asc" };
@@ -563,3 +569,6 @@ async function writeAudit(req: Request, action: Parameters<AuditService["record"
 }
 
 export { router as parentRoutes };
+
+
+

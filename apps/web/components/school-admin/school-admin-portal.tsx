@@ -127,7 +127,7 @@ const modules: ModuleConfig[] = [
   { id: "settings", label: "Settings", icon: Settings, purpose: "School profile, campuses, academic defaults, branding, and provider settings.", status: "Preview", nextAction: "Configure once settings workflow is enabled", requirements: "Needs school profile and provider configuration records." }
 ];
 
-const openedModules = new Set<ModuleId>(["academic", "classes", "sections", "subjects", "admissions", "students", "teachers", "parents", "attendance"]);
+const openedModules = new Set<ModuleId>(["academic", "classes", "sections", "subjects", "admissions", "students", "teachers", "parents", "attendance", "timetable"]);
 const lockedDependencyText: Partial<Record<ModuleId, string>> = {
   attendance: "Locked until academic years, classes, sections, students, and teacher assignment foundations are complete.",
   timetable: "Locked until classes, sections, subjects, and teacher assignments are available.",
@@ -139,6 +139,8 @@ const lockedDependencyText: Partial<Record<ModuleId, string>> = {
 };
 
 const statusOptions = [{ value: "ACTIVE", label: "Active" }, { value: "INACTIVE", label: "Inactive" }];
+const dayOptions = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"].map((value) => ({ value, label: humanize(value) }));
+
 const relationOptions = [{ value: "FATHER", label: "Father" }, { value: "MOTHER", label: "Mother" }, { value: "GUARDIAN", label: "Guardian" }, { value: "OTHER", label: "Other" }];
 const admissionStatusOptions = [
   { value: "NEW", label: "New" },
@@ -342,6 +344,8 @@ export function SchoolAdminPortal() {
           <AdmissionsWorkspace refreshKey={refreshKey} onChanged={refreshAll} />
         ) : activeModule === "attendance" ? (
           <AttendanceWorkspace refreshKey={refreshKey} />
+        ) : activeModule === "timetable" ? (
+          <TimetableWorkspace refreshKey={refreshKey} onChanged={refreshAll} />
         ) : openedModules.has(activeModule) ? (
           <CorePeopleWorkspace moduleId={activeModule} refreshKey={refreshKey} onChanged={refreshAll} />
         ) : (
@@ -531,6 +535,125 @@ function LeaveRequestReviewQueue() {
   );
 }
 
+function TimetableWorkspace({ refreshKey, onChanged }: { refreshKey: number; onChanged: () => void }) {
+  const emptyForm = { className: "", subject: "", teacher: "", dayOfWeek: "MONDAY", startsAt: "08:00", endsAt: "08:40", status: "ACTIVE" };
+  const { rows, loading, error, refresh, setRows } = useResourceList("timetable", refreshKey);
+  const classes = useResourceList("classes", refreshKey);
+  const subjects = useResourceList("subjects", refreshKey);
+  const teachers = useResourceList("teachers", refreshKey);
+  const [form, setForm] = useState(emptyForm);
+  const [editing, setEditing] = useState<ResourceRow | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
+
+  const update = (key: keyof typeof emptyForm, value: string) => setForm((current) => ({ ...current, [key]: value }));
+  const startEdit = (row: ResourceRow) => {
+    setEditing(row);
+    setForm({
+      className: String(row.className ?? ""),
+      subject: String(row.subject ?? ""),
+      teacher: String(row.teacher ?? ""),
+      dayOfWeek: String(row.dayOfWeek ?? "MONDAY"),
+      startsAt: String(row.startsAt ?? "08:00"),
+      endsAt: String(row.endsAt ?? "08:40"),
+      status: String(row.status ?? "ACTIVE")
+    });
+    setMessage(null);
+  };
+  const reset = () => {
+    setEditing(null);
+    setForm(emptyForm);
+  };
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!form.className || !form.subject || !form.teacher || !form.dayOfWeek || !form.startsAt || !form.endsAt) {
+      setMessage({ tone: "error", text: "Class, subject, teacher, day, start time, and end time are required." });
+      return;
+    }
+    if (form.startsAt >= form.endsAt) {
+      setMessage({ tone: "error", text: "End time must be after start time." });
+      return;
+    }
+    setSaving(true);
+    setMessage(null);
+    try {
+      const payload: ApiOne<ResourceRow> = await api(editing ? `timetable/${editing.id}` : "timetable", { method: editing ? "PATCH" : "POST", body: JSON.stringify(form) });
+      const warnings = Array.isArray(payload.data?.warnings) ? payload.data.warnings : [];
+      setMessage({ tone: warnings.length ? "error" : "success", text: warnings.length ? `Saved with warning: ${warnings[0]}` : editing ? "Timetable slot updated." : "Timetable slot created." });
+      setRows((current) => editing ? current.map((row) => row.id === payload.data.id ? payload.data : row) : [payload.data, ...current]);
+      reset();
+      refresh();
+      onChanged();
+    } catch (caught) {
+      setMessage({ tone: "error", text: caught instanceof Error ? caught.message : "Timetable slot could not be saved." });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function remove(row: ResourceRow) {
+    setSaving(true);
+    setMessage(null);
+    try {
+      await api(`timetable/${row.id}`, { method: "DELETE" });
+      setRows((current) => current.filter((item) => item.id !== row.id));
+      setMessage({ tone: "success", text: "Timetable slot removed." });
+      onChanged();
+    } catch (caught) {
+      setMessage({ tone: "error", text: caught instanceof Error ? caught.message : "Timetable slot could not be removed." });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="space-y-5">
+      <section className="rounded-lg border border-border bg-surface p-5 shadow-panel">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <StatusBadge status="Ready" />
+            <h2 className="mt-3 text-2xl font-semibold">Timetable</h2>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">Create class timetable slots using real classes, subjects, and teachers. Section-specific slots, rooms, and notes need a later schema expansion.</p>
+          </div>
+          <button className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-border bg-background px-3 text-sm font-medium" onClick={refresh} type="button"><RefreshCw aria-hidden={true} size={15} />Refresh</button>
+        </div>
+      </section>
+
+      <form className="rounded-lg border border-border bg-surface p-4 shadow-panel" onSubmit={submit}>
+        <h3 className="text-base font-semibold">{editing ? "Edit timetable slot" : "Create timetable slot"}</h3>
+        <p className="mt-1 text-sm text-muted-foreground">End time must be after start time. Conflict warnings are shown after save.</p>
+        {message ? <div className={`mt-4 rounded-md border p-3 text-sm ${message.tone === "success" ? "border-success/30 bg-success/10 text-success" : "border-error/30 bg-error/10 text-error"}`}>{message.text}</div> : null}
+        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          <FieldControl field={{ name: "className", label: "Class", type: "select", required: true, options: [{ value: "", label: classes.loading ? "Loading classes" : "Select class" }, ...classes.rows.map((row) => ({ value: String(row.name ?? row.id), label: optionLabelForClass(row) }))] }} value={form.className} onChange={(value) => update("className", value)} />
+          <FieldControl field={{ name: "subject", label: "Subject", type: "select", required: true, options: [{ value: "", label: subjects.loading ? "Loading subjects" : "Select subject" }, ...subjects.rows.map((row) => ({ value: String(row.name ?? row.id), label: `${row.name ?? row.code}${row.status ? ` - ${humanize(row.status)}` : ""}` }))] }} value={form.subject} onChange={(value) => update("subject", value)} />
+          <FieldControl field={{ name: "teacher", label: "Teacher", type: "select", required: true, options: [{ value: "", label: teachers.loading ? "Loading teachers" : "Select teacher" }, ...teachers.rows.map((row) => ({ value: String(row.name ?? row.id), label: `${row.name ?? row.email}${row.status ? ` - ${humanize(row.status)}` : ""}` }))] }} value={form.teacher} onChange={(value) => update("teacher", value)} />
+          <FieldControl field={{ name: "dayOfWeek", label: "Day", type: "select", required: true, options: dayOptions }} value={form.dayOfWeek} onChange={(value) => update("dayOfWeek", value)} />
+          <FieldControl field={{ name: "startsAt", label: "Start time", type: "text", required: true, placeholder: "08:00" }} value={form.startsAt} onChange={(value) => update("startsAt", value)} />
+          <FieldControl field={{ name: "endsAt", label: "End time", type: "text", required: true, placeholder: "08:40" }} value={form.endsAt} onChange={(value) => update("endsAt", value)} />
+          <FieldControl field={{ name: "status", label: "Status", type: "select", options: statusOptions }} value={form.status} onChange={(value) => update("status", value)} />
+        </div>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button className="inline-flex min-h-10 items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-60" disabled={saving || classes.rows.length === 0 || subjects.rows.length === 0 || teachers.rows.length === 0} type="submit">{saving ? "Saving..." : editing ? "Update slot" : "Create slot"}</button>
+          {editing ? <button className="inline-flex min-h-10 items-center justify-center rounded-md border border-border bg-background px-4 text-sm font-medium" onClick={reset} type="button">Cancel edit</button> : null}
+        </div>
+        {classes.rows.length === 0 ? <p className="mt-3 text-sm text-error">Create classes before timetable slots.</p> : null}
+        {subjects.rows.length === 0 ? <p className="mt-3 text-sm text-error">Create subjects before timetable slots.</p> : null}
+        {teachers.rows.length === 0 ? <p className="mt-3 text-sm text-error">Create teachers before timetable slots.</p> : null}
+      </form>
+
+      <section className="rounded-lg border border-border bg-surface shadow-panel">
+        <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
+          <div><h3 className="text-base font-semibold">Timetable slots</h3><p className="mt-1 text-xs text-muted-foreground">Real school-scoped slots only.</p></div>
+          <span className="rounded-md border border-border bg-background px-2 py-1 text-sm font-medium">{formatNumber(rows.length)}</span>
+        </div>
+        {loading ? <StatePanel text="Loading timetable" compact /> : error ? <StatePanel text={error} tone="error" compact onRetry={refresh} /> : rows.length === 0 ? <StatePanel text="No timetable slots have been created yet." compact /> : (
+          <div className="overflow-x-auto"><table className="min-w-full divide-y divide-border text-sm"><thead className="bg-muted/40 text-left text-xs uppercase text-muted-foreground"><tr><th className="px-4 py-3 font-semibold">Class</th><th className="px-4 py-3 font-semibold">Subject</th><th className="px-4 py-3 font-semibold">Teacher</th><th className="px-4 py-3 font-semibold">Day</th><th className="px-4 py-3 font-semibold">Time</th><th className="px-4 py-3 font-semibold">Status</th><th className="px-4 py-3 font-semibold">Action</th></tr></thead><tbody className="divide-y divide-border">{rows.map((row) => <tr key={row.id}><td className="px-4 py-3">{row.className}</td><td className="px-4 py-3">{row.subject}</td><td className="px-4 py-3">{row.teacher}</td><td className="px-4 py-3">{humanize(row.dayOfWeek ?? "")}</td><td className="px-4 py-3">{row.startsAt} - {row.endsAt}</td><td className="px-4 py-3">{humanize(row.status ?? "")}</td><td className="px-4 py-3"><div className="flex flex-wrap gap-2"><button className="rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium" onClick={() => startEdit(row)} type="button">Edit</button><button className="rounded-md border border-error/30 bg-error/10 px-3 py-1.5 text-xs font-medium text-error" onClick={() => remove(row)} type="button">Remove</button></div></td></tr>)}</tbody></table></div>
+        )}
+      </section>
+    </div>
+  );
+}
 function AttendanceWorkspace({ refreshKey }: { refreshKey: number }) {
   const today = new Date().toISOString().slice(0, 10);
   const [date, setDate] = useState(today);
@@ -626,7 +749,8 @@ function SetupCoach({ dashboard, readiness, onOpenModule }: { dashboard: ReturnT
     { label: "Enroll students", done: flags?.hasStudent ?? dashboard.metrics.students > 0, count: readiness?.counts?.students ?? dashboard.metrics.students, moduleId: "students" as ModuleId, action: "Open students" },
     { label: "Create teachers", done: flags?.hasTeacher ?? dashboard.metrics.teachers > 0, count: readiness?.counts?.teachers ?? dashboard.metrics.teachers, moduleId: "teachers" as ModuleId, action: "Open teachers" },
     { label: "Assign teachers", done: flags?.hasTeacherAssignment ?? false, count: readiness?.counts?.teacherAssignments ?? 0, moduleId: "teachers" as ModuleId, action: "Open assignments" },
-    { label: "Mark attendance", done: flags?.hasAttendance ?? dashboard.metrics.attendance > 0, count: readiness?.counts?.attendanceRecords ?? dashboard.metrics.attendance, moduleId: "attendance" as ModuleId, action: "Open attendance" }
+    { label: "Mark attendance", done: flags?.hasAttendance ?? dashboard.metrics.attendance > 0, count: readiness?.counts?.attendanceRecords ?? dashboard.metrics.attendance, moduleId: "attendance" as ModuleId, action: "Open attendance" },
+    { label: "Create timetable slots", done: flags?.hasTimetable ?? dashboard.metrics.timetable > 0, count: readiness?.counts?.timetableSlots ?? dashboard.metrics.timetable, moduleId: "timetable" as ModuleId, action: "Open timetable" }
   ] as const;
   const complete = steps.filter((step) => step.done).length;
 
@@ -1661,6 +1785,7 @@ function readinessCountFor(moduleId: ModuleId, readiness: ReadinessData | null) 
     teachers: "teachers",
     parents: "parentGuardians",
     attendance: "attendanceRecords",
+    timetable: "timetableSlots",
     exams: "examRecords",
     fees: "feeRecords",
     library: "libraryBooks",
@@ -1713,3 +1838,8 @@ function formatDate(value: string) {
 function humanize(value: string) {
   return value.replaceAll("_", " ").toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
+
+
+
+
+

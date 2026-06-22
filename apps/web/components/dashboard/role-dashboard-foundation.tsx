@@ -279,7 +279,9 @@ export function RoleDashboardFoundation({ kind }: { kind: keyof typeof configs }
             </div>
           </section>
 
+          {kind === "teacher" ? <TeacherTimetablePanel /> : null}
           {kind === "teacher" ? <TeacherAttendanceManager /> : null}
+          {kind === "student" ? <StudentTimetablePanel /> : null}
           {kind === "student" ? <StudentAttendancePanel /> : null}
         </>
       )}
@@ -287,6 +289,46 @@ export function RoleDashboardFoundation({ kind }: { kind: keyof typeof configs }
   );
 }
 
+function TeacherTimetablePanel() {
+  const [records, setRecords] = useState<Row[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    setLoading(true);
+    api("teacher", "timetable")
+      .then((payload: ApiOne<Row[]> | { success: true; data: Row[] }) => setRecords(Array.isArray(payload.data) ? payload.data : []))
+      .catch((caught) => setError(caught instanceof Error ? caught.message : "Timetable could not load."))
+      .finally(() => setLoading(false));
+  }, []);
+  return <TimetableList title="My Timetable" records={records} loading={loading} error={error} emptyText="No timetable slots assigned yet." />;
+}
+
+function StudentTimetablePanel() {
+  const [records, setRecords] = useState<Row[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    setLoading(true);
+    api("student", "timetable")
+      .then((payload: ApiOne<Row[]> | { success: true; data: Row[] }) => setRecords(Array.isArray(payload.data) ? payload.data : []))
+      .catch((caught) => setError(caught instanceof Error ? caught.message : "Timetable could not load."))
+      .finally(() => setLoading(false));
+  }, []);
+  return <TimetableList title="My Timetable" records={records} loading={loading} error={error} emptyText="No timetable slots have been created for your class yet." />;
+}
+
+function TimetableList({ title, records, loading, error, emptyText }: { title: string; records: Row[]; loading: boolean; error: string | null; emptyText: string }) {
+  return (
+    <section className="rounded-lg border border-border bg-surface p-4 shadow-panel">
+      <h2 className="text-base font-semibold">{title}</h2>
+      {loading ? <StatePanel text="Loading timetable" compact /> : error ? <StatePanel text={error} tone="error" compact /> : records.length === 0 ? <StatePanel text={emptyText} compact /> : (
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          {records.map((row) => <div key={String(row.id)} className="rounded-md border border-border bg-background p-3 text-sm"><p className="font-medium">{stringValue(row.subject)} - {stringValue(row.className)}</p><p className="mt-1 text-muted-foreground">{stringValue(row.dayOfWeek).replaceAll("_", " ")} • {stringValue(row.startsAt)} to {stringValue(row.endsAt)}</p><p className="mt-1 text-muted-foreground">Teacher: {stringValue(row.teacher)}</p></div>)}
+        </div>
+      )}
+    </section>
+  );
+}
 function TeacherAttendanceManager() {
   const today = new Date().toISOString().slice(0, 10);
   const [context, setContext] = useState<TeacherAttendanceContext | null>(null);
@@ -615,3 +657,5 @@ function formatDate(value: string) {
 function stringValue(value: unknown) {
   return typeof value === "string" && value.trim() ? value : "Not available";
 }
+
+
