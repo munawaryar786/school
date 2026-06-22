@@ -84,6 +84,32 @@ const teacherAssignmentSchema = z.object({
   status: z.string().trim().min(1).default("ACTIVE")
 });
 
+const admissionStatusSchema = z.enum(["NEW", "UNDER_REVIEW", "APPROVED", "REJECTED", "ENROLLED"]);
+
+const admissionCreateSchema = z.object({
+  applicationNo: z.string().trim().min(1).optional(),
+  applicantName: z.string().trim().min(2),
+  guardianName: z.string().trim().min(2),
+  guardianPhone: z.string().trim().min(2),
+  desiredClass: z.string().trim().min(1),
+  source: z.string().trim().min(1).default("SCHOOL_ADMIN"),
+  status: admissionStatusSchema.default("NEW"),
+  notes: z.string().trim().max(2000).optional()
+});
+
+const admissionUpdateSchema = admissionCreateSchema.partial();
+
+const admissionStatusUpdateSchema = z.object({
+  status: admissionStatusSchema,
+  notes: z.string().trim().max(2000).optional()
+});
+
+const admissionConvertSchema = z.object({
+  admissionNumber: z.string().trim().min(1).optional(),
+  status: z.string().trim().min(1).default("ACTIVE"),
+  notes: z.string().trim().max(2000).optional()
+});
+
 type Resource =
   | "academic-years"
   | "classes"
@@ -152,6 +178,24 @@ for (const resource of explicitCrudResources) {
   router.post(`/${resource}`, (req, res, next) => createSchoolResource(req, res, next, resource));
   router.patch(`/${resource}/:id`, (req, res, next) => updateSchoolResource(req, res, next, resource));
 }
+
+router.patch("/academic-years/:id/activate", async (req, res, next) => {
+  try {
+    const schoolId = requireSchool(req, res);
+    if (!schoolId) return;
+    const id = routeId(req);
+    const existing = await prisma.academicYear.findFirst({ where: { id, schoolId } });
+    if (!existing) return fail(res, 404, "NOT_FOUND", "Academic year not found for this school.");
+    const row = await prisma.$transaction(async (tx) => {
+      await tx.academicYear.updateMany({ where: { schoolId, id: { not: id }, status: "ACTIVE" }, data: { status: "INACTIVE" } });
+      return tx.academicYear.update({ where: { id }, data: { status: "ACTIVE" } });
+    });
+    await writeAudit(req, "UPDATE", "academic-years", row.id, { status: "ACTIVE", activated: true });
+    return ok(res, row);
+  } catch (error) {
+    next(error);
+  }
+});
 
 router.get("/readiness", async (req, res, next) => {
   try {
@@ -244,6 +288,172 @@ router.get("/dashboard", async (req, res, next) => {
       lastUpdatedAt: new Date().toISOString()
     });
   } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/admissions", async (req, res, next) => {
+  try {
+    const schoolId = requireSchool(req, res);
+    if (!schoolId) return;
+    const query = pageQuerySchema.parse(req.query);
+    const where: any = { schoolId };
+    if (query.status) where.status = query.status;
+    if (query.search) {
+      where.OR = ["applicationNo", "applicantName", "guardianName", "guardianPhone", "desiredClass", "source", "status"].map((field) => ({
+        [field]: { contains: query.search, mode: "insensitive" }
+      }));
+    }
+    const [rows, total] = await Promise.all([
+      prisma.admissionApplication.findMany({
+        where,
+        include: { enrollments: { select: { id: true, enrollmentNo: true, studentName: true, className: true, status: true, enrolledOn: true }, orderBy: { createdAt: "desc" } } },
+        orderBy: { createdAt: "desc" },
+        skip: (query.page - 1) * query.pageSize,
+        take: query.pageSize
+      }),
+      prisma.admissionApplication.count({ where })
+    ]);
+    return paginated(res, rows.map(serializeAdmissionApplication), query.page, query.pageSize, total);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/admissions", async (req, res, next) => {
+  try {
+    const schoolId = requireSchool(req, res);
+    if (!schoolId) return;
+    const input = admissionCreateSchema.parse(req.body);
+    const desiredClass = await resolveDesiredClassName(schoolId, input.desiredClass);
+    if (!desiredClass) return fail(res, 404, "NOT_FOUND", "Class not found for this school.");
+    const applicationNo = input.applicationNo ?? await nextAdmissionApplicationNo(schoolId);
+    const row = await prisma.admissionApplication.create({
+      data: {
+        schoolId,
+        applicationNo,
+        applicantName: input.applicantName,
+        guardianName: input.guardianName,
+        guardianPhone: input.guardianPhone,
+        desiredClass,
+        source: input.source,
+        status: input.status,
+        notes: input.notes
+      },
+      include: { enrollments: { select: { id: true, enrollmentNo: true, studentName: true, className: true, status: true, enrolledOn: true } } }
+    });
+    await writeAudit(req, "CREATE", "admissions", row.id, { applicationNo: row.applicationNo, status: row.status });
+    return ok(res, serializeAdmissionApplication(row), 201);
+  } catch (error) {
+    if (isUniqueError(error)) return fail(res, 409, "CONFLICT", "An admission with this application number already exists.");
+    next(error);
+  }
+});
+
+router.patch("/admissions/:id", async (req, res, next) => {
+  try {
+    const schoolId = requireSchool(req, res);
+    if (!schoolId) return;
+    const id = routeId(req);
+    const existing = await prisma.admissionApplication.findFirst({ where: { id, schoolId } });
+    if (!existing) return fail(res, 404, "NOT_FOUND", "Admission application not found for this school.");
+    const input = admissionUpdateSchema.parse(req.body);
+    const desiredClass = input.desiredClass ? await resolveDesiredClassName(schoolId, input.desiredClass) : undefined;
+    if (input.desiredClass && !desiredClass) return fail(res, 404, "NOT_FOUND", "Class not found for this school.");
+    const row = await prisma.admissionApplication.update({
+      where: { id },
+      data: {
+        ...(input.applicationNo !== undefined ? { applicationNo: input.applicationNo } : {}),
+        ...(input.applicantName !== undefined ? { applicantName: input.applicantName } : {}),
+        ...(input.guardianName !== undefined ? { guardianName: input.guardianName } : {}),
+        ...(input.guardianPhone !== undefined ? { guardianPhone: input.guardianPhone } : {}),
+        ...(desiredClass !== undefined ? { desiredClass } : {}),
+        ...(input.source !== undefined ? { source: input.source } : {}),
+        ...(input.status !== undefined ? { status: input.status } : {}),
+        ...(input.notes !== undefined ? { notes: input.notes } : {})
+      },
+      include: { enrollments: { select: { id: true, enrollmentNo: true, studentName: true, className: true, status: true, enrolledOn: true } } }
+    });
+    await writeAudit(req, "UPDATE", "admissions", row.id, { status: row.status });
+    return ok(res, serializeAdmissionApplication(row));
+  } catch (error) {
+    if (isUniqueError(error)) return fail(res, 409, "CONFLICT", "An admission with this application number already exists.");
+    next(error);
+  }
+});
+
+router.patch("/admissions/:id/status", async (req, res, next) => {
+  try {
+    const schoolId = requireSchool(req, res);
+    if (!schoolId) return;
+    const id = routeId(req);
+    const existing = await prisma.admissionApplication.findFirst({ where: { id, schoolId } });
+    if (!existing) return fail(res, 404, "NOT_FOUND", "Admission application not found for this school.");
+    const input = admissionStatusUpdateSchema.parse(req.body);
+    if (existing.status === "ENROLLED" && input.status !== "ENROLLED") return fail(res, 400, "VALIDATION_ERROR", "Enrolled admissions cannot be moved back from enrolled status.");
+    const row = await prisma.admissionApplication.update({
+      where: { id },
+      data: { status: input.status, ...(input.notes !== undefined ? { notes: input.notes } : {}) },
+      include: { enrollments: { select: { id: true, enrollmentNo: true, studentName: true, className: true, status: true, enrolledOn: true } } }
+    });
+    await writeAudit(req, "UPDATE", "admissions", row.id, { status: row.status });
+    return ok(res, serializeAdmissionApplication(row));
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/admissions/:id/convert-to-student", async (req, res, next) => {
+  try {
+    const schoolId = requireSchool(req, res);
+    if (!schoolId) return;
+    const id = routeId(req);
+    const input = admissionConvertSchema.parse(req.body);
+    const admission = await prisma.admissionApplication.findFirst({
+      where: { id, schoolId },
+      include: { enrollments: { select: { id: true } } }
+    });
+    if (!admission) return fail(res, 404, "NOT_FOUND", "Admission application not found for this school.");
+    if (admission.status === "ENROLLED" || admission.enrollments.length > 0) return fail(res, 409, "CONFLICT", "This admission has already been converted to a student.");
+    if (admission.status !== "APPROVED") return fail(res, 400, "VALIDATION_ERROR", "Only approved admissions can be converted to students.");
+    const admissionNumber = input.admissionNumber ?? admission.applicationNo;
+    const duplicateStudent = await prisma.studentProfile.findFirst({ where: { schoolId, admissionNumber } });
+    if (duplicateStudent) return fail(res, 409, "CONFLICT", "A student with this admission number already exists.");
+    const result = await prisma.$transaction(async (tx) => {
+      const student = await tx.studentProfile.create({
+        data: {
+          schoolId,
+          admissionNumber,
+          name: admission.applicantName,
+          guardianName: admission.guardianName,
+          guardianPhone: admission.guardianPhone,
+          className: admission.desiredClass,
+          status: input.status
+        }
+      });
+      const enrollment = await tx.admissionEnrollment.create({
+        data: {
+          schoolId,
+          applicationId: admission.id,
+          studentName: admission.applicantName,
+          className: admission.desiredClass,
+          enrollmentNo: admissionNumber,
+          status: "ENROLLED",
+          notes: input.notes ?? admission.notes
+        }
+      });
+      const updatedAdmission = await tx.admissionApplication.update({
+        where: { id: admission.id },
+        data: { status: "ENROLLED" },
+        include: { enrollments: { select: { id: true, enrollmentNo: true, studentName: true, className: true, status: true, enrolledOn: true } } }
+      });
+      return { student, enrollment, admission: serializeAdmissionApplication(updatedAdmission) };
+    });
+    await writeAudit(req, "CREATE", "students", result.student.id, { admissionId: admission.id, admissionNumber });
+    await writeAudit(req, "UPDATE", "admissions", admission.id, { status: "ENROLLED", convertedStudentId: result.student.id });
+    return ok(res, result, 201);
+  } catch (error) {
+    if (isUniqueError(error)) return fail(res, 409, "CONFLICT", "This admission or student number already exists.");
     next(error);
   }
 });
@@ -800,6 +1010,53 @@ function serializeLeaveRequest(row: any) {
     })) : []
   };
 }
+
+function serializeAdmissionApplication(row: any) {
+  return {
+    id: row.id,
+    schoolId: row.schoolId,
+    applicationNo: row.applicationNo,
+    applicantName: row.applicantName,
+    guardianName: row.guardianName,
+    guardianPhone: row.guardianPhone,
+    desiredClass: row.desiredClass,
+    source: row.source,
+    appliedOn: row.appliedOn,
+    status: row.status,
+    notes: row.notes,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    enrollments: Array.isArray(row.enrollments) ? row.enrollments : []
+  };
+}
+
+async function resolveDesiredClassName(schoolId: string, value: string) {
+  const trimmed = value.trim();
+  const classLevel = await prisma.classLevel.findFirst({
+    where: {
+      schoolId,
+      OR: [
+        { id: trimmed },
+        { name: { equals: trimmed, mode: "insensitive" } },
+        { code: { equals: trimmed, mode: "insensitive" } }
+      ]
+    },
+    select: { name: true }
+  });
+  return classLevel?.name ?? null;
+}
+
+async function nextAdmissionApplicationNo(schoolId: string) {
+  const year = new Date().getFullYear();
+  const count = await prisma.admissionApplication.count({
+    where: {
+      schoolId,
+      applicationNo: { startsWith: `ADM-${year}-` }
+    }
+  });
+  return `ADM-${year}-${String(count + 1).padStart(4, "0")}`;
+}
+
 function parseResource(req: Request, res: Response): Resource | null {
   const resource = req.params.resource as Resource;
   if (!resource || !(resource in schemas)) {

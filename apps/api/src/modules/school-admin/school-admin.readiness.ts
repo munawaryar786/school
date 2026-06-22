@@ -19,6 +19,7 @@ export async function buildSchoolReadiness(schoolId: string) {
     classes,
     sections,
     subjects,
+    admissions,
     students,
     teachers,
     teacherAssignments,
@@ -36,6 +37,7 @@ export async function buildSchoolReadiness(schoolId: string) {
     db.classLevel.count({ where: { schoolId } }),
     db.section.count({ where: { schoolId } }),
     db.subject.count({ where: { schoolId } }),
+    db.admissionApplication.count({ where: { schoolId } }),
     db.studentProfile.count({ where: { schoolId } }),
     db.teacherProfile.count({ where: { schoolId } }),
     safeCount(() => db.teacherSubjectAssignment.count({ where: { schoolId } })),
@@ -49,13 +51,14 @@ export async function buildSchoolReadiness(schoolId: string) {
     db.lmsProgress.count({ where: { schoolId } })
   ]);
 
-  const counts = { academicYears, activeAcademicYears, classes, sections, subjects, students, teachers, teacherAssignments, parentGuardians, parentChildLinks, leaveRequests, attendanceRecords, examRecords, feeRecords, libraryBooks, lmsProgress };
+  const counts = { academicYears, activeAcademicYears, classes, sections, subjects, admissions, students, teachers, teacherAssignments, parentGuardians, parentChildLinks, leaveRequests, attendanceRecords, examRecords, feeRecords, libraryBooks, lmsProgress };
   const flags = {
     hasAcademicYear: academicYears > 0,
     hasActiveAcademicYear: activeAcademicYears > 0,
     hasClass: classes > 0,
     hasSection: sections > 0,
     hasSubject: subjects > 0,
+    hasAdmission: admissions > 0,
     hasStudent: students > 0,
     hasTeacher: teachers > 0,
     hasTeacherAssignment: teacherAssignments > 0,
@@ -86,7 +89,8 @@ function buildModuleRules(flags: Record<string, boolean>, counts: Record<string,
     classes: { label: "Classes", ready: flags.hasClass, dependencies: [["Class", flags.hasClass]], nextAction: flags.hasClass ? "Maintain class records" : "Create a class" },
     sections: { label: "Sections", ready: flags.hasSection, dependencies: [["Class", flags.hasClass], ["Section", flags.hasSection]], nextAction: flags.hasClass ? "Create a section" : "Create a class first" },
     subjects: { label: "Subjects/Courses", ready: flags.hasSubject, dependencies: [["Subject", flags.hasSubject]], nextAction: flags.hasSubject ? "Maintain subject records" : "Create a subject" },
-    students: { label: "Students", ready: flags.hasStudent, dependencies: [["Class", flags.hasClass], ["Student", flags.hasStudent]], nextAction: flags.hasClass ? "Create a student profile" : "Create classes before students" },
+    admissions: { label: "Admissions", ready: flags.hasAdmission, dependencies: [["Active academic year", flags.hasActiveAcademicYear], ["Class", flags.hasClass], ["Admission", flags.hasAdmission]], nextAction: flags.hasClass ? "Create an admission applicant" : "Create classes before admissions" },
+    students: { label: "Students", ready: flags.hasStudent, dependencies: [["Class", flags.hasClass], ["Student", flags.hasStudent]], nextAction: flags.hasClass ? "Create a student profile or convert an approved admission" : "Create classes before students" },
     teachers: { label: "Teachers", ready: flags.hasTeacher, dependencies: [["Teacher", flags.hasTeacher]], nextAction: flags.hasTeacher ? "Maintain teacher profiles" : "Create a teacher profile" },
     parents: { label: "Parents/Guardians", ready: flags.hasParentChildLink, dependencies: [["Parent/guardian", flags.hasParentGuardian], ["Parent-child link", flags.hasParentChildLink]], nextAction: flags.hasParentGuardian ? "Link parents to students" : "Create a parent or guardian" },
     "teacher-assignments": { label: "Teacher Assignments", ready: flags.hasTeacherAssignment, dependencies: [["Teacher", flags.hasTeacher], ["Class", flags.hasClass], ["Subject", flags.hasSubject], ["Teacher assignment", flags.hasTeacherAssignment]], nextAction: flags.hasTeacher && flags.hasClass && flags.hasSubject ? "Create a teacher assignment" : "Create teacher, class, and subject first" },

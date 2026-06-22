@@ -71,6 +71,17 @@ type LeaveRequest = {
   student?: { name?: string | null; admissionNumber?: string | null; className?: string | null } | null;
   requestedBy?: { name?: string | null; email?: string | null } | null;
 };
+type AdmissionRow = ResourceRow & {
+  applicationNo?: string;
+  applicantName?: string;
+  guardianName?: string;
+  guardianPhone?: string;
+  desiredClass?: string;
+  source?: string;
+  appliedOn?: string;
+  notes?: string | null;
+  enrollments?: Array<{ id: string; enrollmentNo?: string; studentName?: string; className?: string; status?: string; enrolledOn?: string }>;
+};
 type IconType = ComponentType<{ size?: number; "aria-hidden"?: boolean; className?: string }>;
 type ModuleStatus = "Ready" | "Setup Required" | "Preview" | "Locked" | "Coming Later";
 type FieldType = "text" | "date" | "number" | "select" | "checkbox" | "password";
@@ -91,7 +102,7 @@ type ModuleConfig = {
 
 const modules: ModuleConfig[] = [
   { id: "dashboard", label: "Dashboard", icon: GraduationCap, purpose: "Principal daily brief, setup coach, school metrics, and analytics.", status: "Ready", nextAction: "Review school operations", requirements: "Uses the school admin dashboard endpoint." },
-  { id: "admissions", label: "Admissions", icon: ClipboardList, purpose: "Inquiry, application, interview, and enrollment pipeline.", status: "Preview", countKey: "admissions", nextAction: "Open admissions after the dedicated workflow slice", requirements: "Needs admission applications and review states." },
+  { id: "admissions", label: "Admissions", icon: ClipboardList, purpose: "Application review and enrollment conversion into real student profiles.", status: "Setup Required", countKey: "admissions", nextAction: "Create an admission applicant", requirements: "Needs an active academic year and class records." },
   { id: "students", label: "Students", icon: GraduationCap, purpose: "Student directory, class/section assignment, and parent links.", status: "Setup Required", countKey: "students", nextAction: "Add students after academic setup", requirements: "Needs classes, sections, and student profiles." },
   { id: "parents", label: "Parents", icon: Users, purpose: "Guardian accounts, linked children, engagement, and contact workflows.", status: "Setup Required", countKey: "parents", nextAction: "Link parents after student profiles exist", requirements: "Needs student profiles and guardian links." },
   { id: "teachers", label: "Teachers", icon: UserRoundCheck, purpose: "Teacher accounts, subject assignments, and class responsibility.", status: "Setup Required", countKey: "teachers", nextAction: "Create teachers before assignments", requirements: "Needs teacher profiles and academic structure." },
@@ -111,7 +122,7 @@ const modules: ModuleConfig[] = [
   { id: "settings", label: "Settings", icon: Settings, purpose: "School profile, campuses, academic defaults, branding, and provider settings.", status: "Preview", nextAction: "Configure once settings workflow is enabled", requirements: "Needs school profile and provider configuration records." }
 ];
 
-const openedModules = new Set<ModuleId>(["academic", "classes", "sections", "subjects", "students", "teachers", "parents"]);
+const openedModules = new Set<ModuleId>(["academic", "classes", "sections", "subjects", "admissions", "students", "teachers", "parents"]);
 const lockedDependencyText: Partial<Record<ModuleId, string>> = {
   attendance: "Locked until academic years, classes, sections, students, and teacher assignment foundations are complete.",
   timetable: "Locked until classes, sections, subjects, and teacher assignments are available.",
@@ -124,6 +135,13 @@ const lockedDependencyText: Partial<Record<ModuleId, string>> = {
 
 const statusOptions = [{ value: "ACTIVE", label: "Active" }, { value: "INACTIVE", label: "Inactive" }];
 const relationOptions = [{ value: "FATHER", label: "Father" }, { value: "MOTHER", label: "Mother" }, { value: "GUARDIAN", label: "Guardian" }, { value: "OTHER", label: "Other" }];
+const admissionStatusOptions = [
+  { value: "NEW", label: "New" },
+  { value: "UNDER_REVIEW", label: "Under review" },
+  { value: "APPROVED", label: "Approved" },
+  { value: "REJECTED", label: "Rejected" },
+  { value: "ENROLLED", label: "Enrolled" }
+];
 
 const resourceConfigs: Record<Exclude<ModuleId, "dashboard" | "admissions" | "attendance" | "timetable" | "exams" | "fees" | "library" | "reading" | "lms" | "notices" | "reports" | "settings">, ResourceConfig> = {
   academic: {
@@ -313,7 +331,15 @@ export function SchoolAdminPortal() {
           </button>
         </header>
 
-        {activeModule === "dashboard" ? <Dashboard refreshKey={refreshKey} readiness={readiness} onOpenModule={setActiveModule} /> : openedModules.has(activeModule) ? <CorePeopleWorkspace moduleId={activeModule} refreshKey={refreshKey} onChanged={refreshAll} /> : <ModulePreview module={active} readiness={readiness.data} />}
+        {activeModule === "dashboard" ? (
+          <Dashboard refreshKey={refreshKey} readiness={readiness} onOpenModule={setActiveModule} />
+        ) : activeModule === "admissions" ? (
+          <AdmissionsWorkspace refreshKey={refreshKey} onChanged={refreshAll} />
+        ) : openedModules.has(activeModule) ? (
+          <CorePeopleWorkspace moduleId={activeModule} refreshKey={refreshKey} onChanged={refreshAll} />
+        ) : (
+          <ModulePreview module={active} readiness={readiness.data} />
+        )}
       </main>
     </div>
   );
@@ -504,6 +530,8 @@ function SetupCoach({ dashboard, readiness, onOpenModule }: { dashboard: ReturnT
     { label: "Create classes 1-12", done: flags?.hasClass ?? dashboard.metrics.classes > 0, count: readiness?.counts?.classes ?? dashboard.metrics.classes, moduleId: "classes" as ModuleId, action: "Open classes" },
     { label: "Create sections", done: flags?.hasSection ?? dashboard.metrics.sections > 0, count: readiness?.counts?.sections ?? dashboard.metrics.sections, moduleId: "sections" as ModuleId, action: "Open sections" },
     { label: "Create subjects", done: flags?.hasSubject ?? dashboard.metrics.subjects > 0, count: readiness?.counts?.subjects ?? dashboard.metrics.subjects, moduleId: "subjects" as ModuleId, action: "Open subjects" },
+    { label: "Create admissions", done: flags?.hasAdmission ?? dashboard.metrics.admissions > 0, count: readiness?.counts?.admissions ?? dashboard.metrics.admissions, moduleId: "admissions" as ModuleId, action: "Open admissions" },
+    { label: "Enroll students", done: flags?.hasStudent ?? dashboard.metrics.students > 0, count: readiness?.counts?.students ?? dashboard.metrics.students, moduleId: "students" as ModuleId, action: "Open students" },
     { label: "Create teachers", done: flags?.hasTeacher ?? dashboard.metrics.teachers > 0, count: readiness?.counts?.teachers ?? dashboard.metrics.teachers, moduleId: "teachers" as ModuleId, action: "Open teachers" },
     { label: "Assign teachers", done: flags?.hasTeacherAssignment ?? false, count: readiness?.counts?.teacherAssignments ?? 0, moduleId: "teachers" as ModuleId, action: "Open assignments" }
   ] as const;
@@ -646,9 +674,253 @@ function CorePeopleWorkspace({ moduleId, refreshKey, onChanged }: { moduleId: Mo
         <ResourceTable config={config} rows={rows} loading={loading} error={error} onRetry={refresh} onEdit={setEditing} />
       </section>
 
+      {moduleId === "academic" ? <AcademicYearActions rows={rows} onChanged={() => { refresh(); onChanged(); }} /> : null}
       {moduleId === "teachers" ? <TeacherAssignments refreshKey={refreshKey} onChanged={onChanged} /> : null}
       {moduleId === "parents" ? <ParentLinking rows={rows} onChanged={() => { refresh(); onChanged(); }} /> : null}
     </div>
+  );
+}
+
+function AcademicYearActions({ rows, onChanged }: { rows: ResourceRow[]; onChanged: () => void }) {
+  const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
+  const [savingId, setSavingId] = useState<string | null>(null);
+  const active = rows.find((row) => String(row.status ?? "").toUpperCase() === "ACTIVE");
+
+  async function activate(row: ResourceRow) {
+    setSavingId(row.id);
+    setMessage(null);
+    try {
+      await api(`academic-years/${row.id}/activate`, { method: "PATCH", body: JSON.stringify({}) });
+      setMessage({ tone: "success", text: `${row.name ?? "Academic year"} is now active.` });
+      onChanged();
+    } catch (caught) {
+      setMessage({ tone: "error", text: caught instanceof Error ? caught.message : "Academic year could not be activated." });
+    } finally {
+      setSavingId(null);
+    }
+  }
+
+  return (
+    <section className="rounded-lg border border-border bg-surface p-4 shadow-panel">
+      <div className="border-b border-border pb-3">
+        <h3 className="text-base font-semibold">Active academic year</h3>
+        <p className="mt-1 text-sm text-muted-foreground">{active ? `${active.name} is currently active.` : "No active academic year is selected yet."}</p>
+      </div>
+      {message ? <div className={`mt-4 rounded-md border p-3 text-sm ${message.tone === "success" ? "border-success/30 bg-success/10 text-success" : "border-error/30 bg-error/10 text-error"}`}>{message.text}</div> : null}
+      <div className="mt-4 flex flex-wrap gap-2">
+        {rows.map((row) => (
+          <button key={row.id} className="inline-flex min-h-9 items-center justify-center rounded-md border border-border bg-background px-3 text-sm font-medium disabled:opacity-60" disabled={savingId === row.id || String(row.status ?? "").toUpperCase() === "ACTIVE"} onClick={() => activate(row)} type="button">
+            {String(row.status ?? "").toUpperCase() === "ACTIVE" ? "Active" : savingId === row.id ? "Activating..." : `Activate ${row.name ?? "year"}`}
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function AdmissionsWorkspace({ refreshKey, onChanged }: { refreshKey: number; onChanged: () => void }) {
+  const { rows, loading, error, refresh, setRows } = useResourceList("admissions", refreshKey);
+  const { rows: classes } = useResourceList("classes", refreshKey);
+  const [editing, setEditing] = useState<AdmissionRow | null>(null);
+
+  function saved(row: ResourceRow) {
+    setRows((current) => editing ? current.map((item) => item.id === row.id ? row : item) : [row, ...current]);
+    setEditing(null);
+    onChanged();
+    refresh();
+  }
+
+  return (
+    <div className="space-y-5">
+      <section className="rounded-lg border border-border bg-surface p-5 shadow-panel">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <StatusBadge status="Ready" />
+            <h2 className="mt-3 text-2xl font-semibold">Admissions</h2>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
+              Create applicant records, review admission status, and convert approved applicants into real student profiles.
+            </p>
+          </div>
+          <button className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-border bg-background px-3 text-sm font-medium" onClick={refresh} type="button">
+            <RefreshCw aria-hidden={true} size={15} />
+            Refresh
+          </button>
+        </div>
+      </section>
+
+      {classes.length === 0 ? <StatePanel text="Create classes before adding admission applicants." compact /> : null}
+      <section className="grid gap-4 xl:grid-cols-[380px_1fr]">
+        <AdmissionForm editing={editing} classes={classes} onCancel={() => setEditing(null)} onSaved={saved} />
+        <AdmissionTable rows={rows as AdmissionRow[]} loading={loading} error={error} onRetry={refresh} onEdit={setEditing} onChanged={() => { refresh(); onChanged(); }} />
+      </section>
+    </div>
+  );
+}
+
+function AdmissionForm({ editing, classes, onCancel, onSaved }: { editing: AdmissionRow | null; classes: ResourceRow[]; onCancel: () => void; onSaved: (row: ResourceRow) => void }) {
+  const [form, setForm] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
+
+  useEffect(() => {
+    setForm({
+      applicationNo: editing?.applicationNo ?? "",
+      applicantName: editing?.applicantName ?? "",
+      guardianName: editing?.guardianName ?? "",
+      guardianPhone: editing?.guardianPhone ?? "",
+      desiredClass: admissionClassValue(editing?.desiredClass ?? "", classes),
+      source: editing?.source ?? "SCHOOL_ADMIN",
+      status: editing?.status ?? "NEW",
+      notes: editing?.notes ?? ""
+    });
+    setMessage(null);
+  }, [editing, classes]);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSaving(true);
+    setMessage(null);
+    try {
+      const body = {
+        ...(form.applicationNo ? { applicationNo: form.applicationNo } : {}),
+        applicantName: form.applicantName,
+        guardianName: form.guardianName,
+        guardianPhone: form.guardianPhone,
+        desiredClass: form.desiredClass,
+        source: form.source || "SCHOOL_ADMIN",
+        status: form.status || "NEW",
+        ...(form.notes ? { notes: form.notes } : {})
+      };
+      const payload: ApiOne<AdmissionRow> = await api(editing ? `admissions/${editing.id}` : "admissions", {
+        method: editing ? "PATCH" : "POST",
+        body: JSON.stringify(body)
+      });
+      setMessage({ tone: "success", text: editing ? "Admission updated." : "Admission applicant created." });
+      onSaved(payload.data);
+    } catch (caught) {
+      setMessage({ tone: "error", text: caught instanceof Error ? caught.message : "Admission could not be saved." });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form className="rounded-lg border border-border bg-surface p-4 shadow-panel" onSubmit={submit}>
+      <div className="border-b border-border pb-3">
+        <h3 className="text-base font-semibold">{editing ? "Edit admission" : "Create admission applicant"}</h3>
+        <p className="mt-1 text-sm text-muted-foreground">Applicant records are school-scoped and can be converted only after approval.</p>
+      </div>
+      {message ? <div className={`mt-4 rounded-md border p-3 text-sm ${message.tone === "success" ? "border-success/30 bg-success/10 text-success" : "border-error/30 bg-error/10 text-error"}`}>{message.text}</div> : null}
+      <div className="mt-4 grid gap-3">
+        <FieldControl field={{ name: "applicationNo", label: "Application number", placeholder: "Auto-generated if blank" }} value={form.applicationNo} onChange={(value) => setForm((current) => ({ ...current, applicationNo: value }))} />
+        <FieldControl field={{ name: "applicantName", label: "Applicant name", required: true }} value={form.applicantName} onChange={(value) => setForm((current) => ({ ...current, applicantName: value }))} />
+        <FieldControl field={{ name: "guardianName", label: "Guardian name", required: true }} value={form.guardianName} onChange={(value) => setForm((current) => ({ ...current, guardianName: value }))} />
+        <FieldControl field={{ name: "guardianPhone", label: "Guardian phone", required: true }} value={form.guardianPhone} onChange={(value) => setForm((current) => ({ ...current, guardianPhone: value }))} />
+        <FieldControl field={{ name: "desiredClass", label: "Requested class", type: "select", required: true, options: [{ value: "", label: "Select class" }, ...classes.map((row, index) => ({ value: row.id, label: optionLabelForClass(row, index) }))] }} value={form.desiredClass} onChange={(value) => setForm((current) => ({ ...current, desiredClass: value }))} />
+        <FieldControl field={{ name: "status", label: "Status", type: "select", options: admissionStatusOptions }} value={form.status} onChange={(value) => setForm((current) => ({ ...current, status: value }))} />
+        <FieldControl field={{ name: "source", label: "Source" }} value={form.source} onChange={(value) => setForm((current) => ({ ...current, source: value }))} />
+        <label className="grid gap-1 text-sm font-medium">
+          Notes
+          <textarea className="min-h-20 rounded-md border border-border bg-background px-3 py-2 text-sm" value={form.notes ?? ""} onChange={(event) => setForm((current) => ({ ...current, notes: event.target.value }))} />
+        </label>
+      </div>
+      <div className="mt-4 flex flex-wrap gap-2">
+        <button className="inline-flex min-h-10 items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-60" type="submit" disabled={saving || classes.length === 0}>{saving ? "Saving..." : editing ? "Update admission" : "Create admission"}</button>
+        {editing ? <button className="inline-flex min-h-10 items-center justify-center rounded-md border border-border bg-background px-4 text-sm font-medium" type="button" onClick={onCancel}>Cancel edit</button> : null}
+      </div>
+    </form>
+  );
+}
+
+function AdmissionTable({ rows, loading, error, onRetry, onEdit, onChanged }: { rows: AdmissionRow[]; loading: boolean; error: string | null; onRetry: () => void; onEdit: (row: AdmissionRow) => void; onChanged: () => void }) {
+  const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
+  const [savingId, setSavingId] = useState<string | null>(null);
+  const [admissionNumbers, setAdmissionNumbers] = useState<Record<string, string>>({});
+
+  async function setStatus(row: AdmissionRow, status: string) {
+    setSavingId(row.id);
+    setMessage(null);
+    try {
+      await api(`admissions/${row.id}/status`, { method: "PATCH", body: JSON.stringify({ status }) });
+      setMessage({ tone: "success", text: `Admission marked ${humanize(status)}.` });
+      onChanged();
+    } catch (caught) {
+      setMessage({ tone: "error", text: caught instanceof Error ? caught.message : "Admission status could not be updated." });
+    } finally {
+      setSavingId(null);
+    }
+  }
+
+  async function convert(row: AdmissionRow) {
+    setSavingId(row.id);
+    setMessage(null);
+    try {
+      await api(`admissions/${row.id}/convert-to-student`, {
+        method: "POST",
+        body: JSON.stringify({ ...(admissionNumbers[row.id] ? { admissionNumber: admissionNumbers[row.id] } : {}) })
+      });
+      setMessage({ tone: "success", text: "Admission converted to student profile." });
+      setAdmissionNumbers((current) => ({ ...current, [row.id]: "" }));
+      onChanged();
+    } catch (caught) {
+      setMessage({ tone: "error", text: caught instanceof Error ? caught.message : "Admission could not be converted." });
+    } finally {
+      setSavingId(null);
+    }
+  }
+
+  return (
+    <section className="rounded-lg border border-border bg-surface shadow-panel">
+      <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
+        <div>
+          <h3 className="text-base font-semibold">Admission records</h3>
+          <p className="mt-1 text-xs text-muted-foreground">Approved admissions can be converted into real students.</p>
+        </div>
+        <span className="rounded-md border border-border bg-background px-2 py-1 text-sm font-medium">{formatNumber(rows.length)}</span>
+      </div>
+      {message ? <div className={`mx-4 mt-4 rounded-md border p-3 text-sm ${message.tone === "success" ? "border-success/30 bg-success/10 text-success" : "border-error/30 bg-error/10 text-error"}`}>{message.text}</div> : null}
+      {loading ? <StatePanel text="Loading admissions" compact /> : error ? <StatePanel text={error} tone="error" compact onRetry={onRetry} /> : rows.length === 0 ? <StatePanel text="No admission applicants have been created yet." compact /> : (
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-border text-sm">
+            <thead className="bg-muted/40 text-left text-xs uppercase text-muted-foreground">
+              <tr>
+                <th className="px-4 py-3 font-semibold">Application</th>
+                <th className="px-4 py-3 font-semibold">Applicant</th>
+                <th className="px-4 py-3 font-semibold">Guardian</th>
+                <th className="px-4 py-3 font-semibold">Class</th>
+                <th className="px-4 py-3 font-semibold">Status</th>
+                <th className="px-4 py-3 font-semibold">Action</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {rows.map((row) => (
+                <tr key={row.id}>
+                  <td className="px-4 py-3 align-top">{row.applicationNo ?? row.id}<br /><span className="text-xs text-muted-foreground">{row.appliedOn ? shortDate(row.appliedOn) : ""}</span></td>
+                  <td className="px-4 py-3 align-top">{row.applicantName}</td>
+                  <td className="px-4 py-3 align-top">{row.guardianName}<br /><span className="text-xs text-muted-foreground">{row.guardianPhone}</span></td>
+                  <td className="px-4 py-3 align-top">{row.desiredClass}</td>
+                  <td className="px-4 py-3 align-top"><LeaveStatusBadge status={row.status ?? "NEW"} /></td>
+                  <td className="min-w-[280px] px-4 py-3 align-top">
+                    <div className="flex flex-wrap gap-2">
+                      <button className="rounded-md border border-border bg-background px-3 py-1.5 text-sm font-medium" type="button" onClick={() => onEdit(row)}>Edit</button>
+                      {row.status !== "ENROLLED" ? <button className="rounded-md border border-border bg-background px-3 py-1.5 text-sm font-medium" disabled={savingId === row.id} type="button" onClick={() => setStatus(row, "UNDER_REVIEW")}>Review</button> : null}
+                      {row.status !== "ENROLLED" ? <button className="rounded-md border border-success/30 bg-success/10 px-3 py-1.5 text-sm font-medium text-success" disabled={savingId === row.id} type="button" onClick={() => setStatus(row, "APPROVED")}>Approve</button> : null}
+                      {row.status !== "ENROLLED" ? <button className="rounded-md border border-error/30 bg-error/10 px-3 py-1.5 text-sm font-medium text-error" disabled={savingId === row.id} type="button" onClick={() => setStatus(row, "REJECTED")}>Reject</button> : null}
+                    </div>
+                    {row.status === "APPROVED" ? (
+                      <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]">
+                        <input className="min-h-9 rounded-md border border-border bg-background px-3 text-sm" placeholder={`Admission #, blank uses ${row.applicationNo ?? "application number"}`} value={admissionNumbers[row.id] ?? ""} onChange={(event) => setAdmissionNumbers((current) => ({ ...current, [row.id]: event.target.value }))} />
+                        <button className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground disabled:opacity-60" disabled={savingId === row.id} type="button" onClick={() => convert(row)}>Convert</button>
+                      </div>
+                    ) : row.status === "ENROLLED" ? <p className="mt-2 text-xs text-muted-foreground">Converted to student.</p> : null}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -1169,6 +1441,12 @@ function optionLabelForClass(row: ResourceRow, index = 0) {
   return `${name}${code}${status}`;
 }
 
+function admissionClassValue(value: string, classes: ResourceRow[]) {
+  if (!value) return "";
+  const found = classes.find((row) => [row.id, row.name, row.code, row.className, row.gradeName].some((item) => String(item ?? "").toLowerCase() === value.toLowerCase()));
+  return found?.id ?? value;
+}
+
 function teacherAssignmentClassRows(classes: ResourceRow[], sections: ResourceRow[]) {
   const byId = new Map<string, ResourceRow>();
   classes.forEach((row, index) => {
@@ -1285,6 +1563,7 @@ function readinessCountFor(moduleId: ModuleId, readiness: ReadinessData | null) 
     classes: "classes",
     sections: "sections",
     subjects: "subjects",
+    admissions: "admissions",
     students: "students",
     teachers: "teachers",
     parents: "parentGuardians",
