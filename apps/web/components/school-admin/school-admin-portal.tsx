@@ -49,6 +49,7 @@ type ModuleId =
 
 type ApiOne<T> = { success: true; data: T };
 type ApiList<T> = { success: true; data: T[]; pagination?: { total: number; page: number; pageSize: number; totalPages: number } };
+type BulkSetupResult = { created: number; existing: number; total: number; rows: ResourceRow[] };
 type ReadinessStatus = "READY" | "SETUP_REQUIRED" | "DEPENDENCY_REQUIRED" | "COMING_LATER";
 type ReadinessModule = { id: string; label: string; status: ReadinessStatus; ready: boolean; nextAction: string; missingDependencies: string[] };
 type ReadinessData = {
@@ -349,7 +350,7 @@ function Dashboard({ refreshKey, readiness, onOpenModule }: { refreshKey: number
       </section>
 
       <section className="grid gap-4 xl:grid-cols-[1fr_1fr]">
-        <SetupCoach dashboard={dashboard} readiness={readiness.data} />
+        <SetupCoach dashboard={dashboard} readiness={readiness.data} onOpenModule={onOpenModule} />
         <ActionQueue dashboard={dashboard} readiness={readiness.data} loading={readiness.loading} error={readiness.error} onRetry={readiness.retry} />
       </section>
 
@@ -484,21 +485,17 @@ function LeaveRequestReviewQueue() {
     </section>
   );
 }
-function SetupCoach({ dashboard, readiness }: { dashboard: ReturnType<typeof normalizeSchoolAdminDashboard>; readiness: ReadinessData | null }) {
+function SetupCoach({ dashboard, readiness, onOpenModule }: { dashboard: ReturnType<typeof normalizeSchoolAdminDashboard>; readiness: ReadinessData | null; onOpenModule: (moduleId: ModuleId) => void }) {
   const flags = readiness?.flags;
   const steps = [
-    ["Create active academic year", flags?.hasActiveAcademicYear ?? dashboard.metrics.classes + dashboard.metrics.sections + dashboard.metrics.subjects > 0],
-    ["Add classes", flags?.hasClass ?? dashboard.metrics.classes > 0],
-    ["Add sections", flags?.hasSection ?? dashboard.metrics.sections > 0],
-    ["Add subjects", flags?.hasSubject ?? dashboard.metrics.subjects > 0],
-    ["Add teachers", flags?.hasTeacher ?? dashboard.metrics.teachers > 0],
-    ["Assign teachers", flags?.hasTeacherAssignment ?? false],
-    ["Add students", flags?.hasStudent ?? dashboard.metrics.students > 0],
-    ["Create parents/guardians", flags?.hasParentGuardian ?? dashboard.metrics.parents > 0],
-    ["Link parents/guardians", flags?.hasParentChildLink ?? false],
-    ["Keep locked modules dependency-gated", true]
+    { label: "Create active academic year", done: flags?.hasActiveAcademicYear ?? dashboard.metrics.classes + dashboard.metrics.sections + dashboard.metrics.subjects > 0, count: readiness?.counts?.activeAcademicYears ?? 0, moduleId: "academic" as ModuleId, action: "Open academic setup" },
+    { label: "Create classes 1-12", done: flags?.hasClass ?? dashboard.metrics.classes > 0, count: readiness?.counts?.classes ?? dashboard.metrics.classes, moduleId: "classes" as ModuleId, action: "Open classes" },
+    { label: "Create sections", done: flags?.hasSection ?? dashboard.metrics.sections > 0, count: readiness?.counts?.sections ?? dashboard.metrics.sections, moduleId: "sections" as ModuleId, action: "Open sections" },
+    { label: "Create subjects", done: flags?.hasSubject ?? dashboard.metrics.subjects > 0, count: readiness?.counts?.subjects ?? dashboard.metrics.subjects, moduleId: "subjects" as ModuleId, action: "Open subjects" },
+    { label: "Create teachers in next phase", done: flags?.hasTeacher ?? dashboard.metrics.teachers > 0, count: readiness?.counts?.teachers ?? dashboard.metrics.teachers, moduleId: "teachers" as ModuleId, action: "Open teachers" },
+    { label: "Assign teachers after setup", done: flags?.hasTeacherAssignment ?? false, count: readiness?.counts?.teacherAssignments ?? 0, moduleId: "teachers" as ModuleId, action: "Open assignments" }
   ] as const;
-  const complete = steps.filter(([, done]) => done).length;
+  const complete = steps.filter((step) => step.done).length;
 
   return (
     <section className="rounded-lg border border-border bg-surface p-4 shadow-panel">
@@ -510,10 +507,16 @@ function SetupCoach({ dashboard, readiness }: { dashboard: ReturnType<typeof nor
         <span className="rounded-md border border-primary/20 bg-primary/10 px-2 py-1 text-sm font-medium text-primary">{formatNumber(complete)} / {formatNumber(steps.length)}</span>
       </div>
       <div className="mt-4 grid gap-2 sm:grid-cols-2">
-        {steps.map(([label, done]) => (
-          <div key={label} className="flex items-center gap-2 rounded-md border border-border bg-background p-3 text-sm">
-            {done ? <CheckCircle2 aria-hidden={true} className="text-success" size={17} /> : <AlertCircle aria-hidden={true} className="text-warning" size={17} />}
-            <span className={done ? "font-medium" : "text-muted-foreground"}>{label}</span>
+        {steps.map((step) => (
+          <div key={step.label} className="grid gap-3 rounded-md border border-border bg-background p-3 text-sm">
+            <div className="flex items-center gap-2">
+              {step.done ? <CheckCircle2 aria-hidden={true} className="text-success" size={17} /> : <AlertCircle aria-hidden={true} className="text-warning" size={17} />}
+              <span className={step.done ? "font-medium" : "text-muted-foreground"}>{step.label}</span>
+              <span className="ml-auto rounded-md border border-border bg-surface px-2 py-1 text-xs font-medium">{formatNumber(step.count)}</span>
+            </div>
+            <button className="inline-flex min-h-9 items-center justify-center rounded-md border border-border bg-surface px-3 text-sm font-medium" type="button" onClick={() => onOpenModule(step.moduleId)}>
+              {step.done ? "Review" : step.action}
+            </button>
           </div>
         ))}
       </div>
@@ -619,6 +622,8 @@ function CorePeopleWorkspace({ moduleId, refreshKey, onChanged }: { moduleId: Mo
         </div>
       </section>
 
+      {moduleId === "classes" || moduleId === "subjects" ? <CoreSetupActions moduleId={moduleId} onCompleted={() => { refresh(); onChanged(); }} /> : null}
+
       <section className="grid gap-4 xl:grid-cols-[380px_1fr]">
         <ResourceForm config={config} editing={editing} onCancel={() => setEditing(null)} onSaved={(row) => {
           setRows((current) => editing ? current.map((item) => item.id === row.id ? row : item) : [row, ...current]);
@@ -632,6 +637,46 @@ function CorePeopleWorkspace({ moduleId, refreshKey, onChanged }: { moduleId: Mo
       {moduleId === "teachers" ? <TeacherAssignments refreshKey={refreshKey} onChanged={onChanged} /> : null}
       {moduleId === "parents" ? <ParentLinking rows={rows} onChanged={() => { refresh(); onChanged(); }} /> : null}
     </div>
+  );
+}
+
+function CoreSetupActions({ moduleId, onCompleted }: { moduleId: ModuleId; onCompleted: () => void }) {
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
+  const isClasses = moduleId === "classes";
+  async function runSetup() {
+    setSaving(true);
+    setMessage(null);
+    try {
+      const payload: ApiOne<BulkSetupResult> = await api(isClasses ? "classes/standard-1-12" : "subjects/common", { method: "POST", body: JSON.stringify({}) });
+      setMessage({
+        tone: "success",
+        text: isClasses
+          ? `Standard classes ready. Created ${formatNumber(payload.data.created)}; already existed ${formatNumber(payload.data.existing)}.`
+          : `Common subjects ready. Created ${formatNumber(payload.data.created)}; already existed ${formatNumber(payload.data.existing)}.`
+      });
+      onCompleted();
+    } catch (caught) {
+      setMessage({ tone: "error", text: caught instanceof Error ? caught.message : "Setup action failed." });
+    } finally {
+      setSaving(false);
+    }
+  }
+  return (
+    <section className="rounded-lg border border-border bg-surface p-4 shadow-panel">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <h3 className="text-base font-semibold">{isClasses ? "Standard classes 1-12" : "Common subject setup"}</h3>
+          <p className="mt-1 text-sm leading-6 text-muted-foreground">
+            {isClasses ? "Create missing Grade 1 through Grade 12 class records. Existing classes are skipped." : "Create missing common subject records. Existing subjects are skipped."}
+          </p>
+        </div>
+        <button className="inline-flex min-h-10 items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-60" type="button" disabled={saving} onClick={runSetup}>
+          {saving ? "Working..." : isClasses ? "Create missing 1-12" : "Create common subjects"}
+        </button>
+      </div>
+      {message ? <div className={`mt-4 rounded-md border p-3 text-sm ${message.tone === "success" ? "border-success/30 bg-success/10 text-success" : "border-error/30 bg-error/10 text-error"}`}>{message.text}</div> : null}
+    </section>
   );
 }
 
@@ -688,7 +733,7 @@ function ResourceForm({ config, editing, onCancel, onSaved }: { config: Resource
       {message ? <div className={`mt-4 rounded-md border p-3 text-sm ${message.tone === "success" ? "border-success/30 bg-success/10 text-success" : "border-error/30 bg-error/10 text-error"}`}>{message.text}</div> : null}
       <div className="mt-4 grid gap-3">
         {config.fields.map((field) => {
-          const dynamicOptions = field.name === "classId" ? classes.map((row) => ({ value: row.id, label: row.name ?? row.code ?? row.id })) : field.name === "className" ? classes.map((row) => ({ value: row.name, label: row.name ?? row.code ?? row.id })) : field.name === "studentId" ? [{ value: "", label: "No child yet" }, ...students.map((row) => ({ value: row.id, label: `${row.name} (${row.admissionNumber ?? "No admission #"} )` }))] : field.options;
+          const dynamicOptions = field.name === "classId" ? classes.map((row) => ({ value: row.id, label: optionLabelForClass(row) })) : field.name === "className" ? classes.map((row) => ({ value: row.name, label: optionLabelForClass(row) })) : field.name === "studentId" ? [{ value: "", label: "No child yet" }, ...students.map((row) => ({ value: row.id, label: `${row.name} (${row.admissionNumber ?? "No admission #"} )` }))] : field.options;
           return <FieldControl key={field.name} field={{ ...field, type: dynamicOptions?.length ? "select" : field.type, options: dynamicOptions }} value={form[field.name]} onChange={(value) => setForm((current) => ({ ...current, [field.name]: value }))} />;
         })}
       </div>
@@ -786,24 +831,29 @@ function TeacherAssignments({ refreshKey, onChanged }: { refreshKey: number; onC
   const dynamicConfig = {
     ...config,
     fields: config.fields.map((field) => {
-      if (field.name === "teacherId") return { ...field, options: teachers.map((row) => ({ value: row.id, label: row.name })) };
-      if (field.name === "classId") return { ...field, options: classes.map((row) => ({ value: row.id, label: row.name })) };
-      if (field.name === "sectionId") return { ...field, options: [{ value: "", label: "All sections" }, ...sections.map((row) => ({ value: row.id, label: `${row.class?.name ?? "Class"} - ${row.name}` }))] };
-      if (field.name === "subjectId") return { ...field, options: subjects.map((row) => ({ value: row.id, label: row.name })) };
+      if (field.name === "teacherId") return { ...field, options: teachers.map((row) => ({ value: row.id, label: row.name ?? row.email ?? row.id })) };
+      if (field.name === "classId") return { ...field, options: classes.map((row) => ({ value: row.id, label: optionLabelForClass(row) })) };
+      if (field.name === "sectionId") return { ...field, options: [{ value: "", label: "All sections" }, ...sections.map((row) => ({ value: row.id, label: optionLabelForSection(row) }))] };
+      if (field.name === "subjectId") return { ...field, options: subjects.map((row) => ({ value: row.id, label: optionLabelForSubject(row) })) };
       return field;
     })
   };
 
   return (
-    <section className="grid gap-4 xl:grid-cols-[380px_1fr]">
-      <ResourceForm config={dynamicConfig} editing={editing} onCancel={() => setEditing(null)} onSaved={(row) => {
-        setRows((current) => editing ? current.map((item) => item.id === row.id ? row : item) : [row, ...current]);
-        setEditing(null);
-        onChanged();
-        refresh();
-      }} />
-      <ResourceTable config={config} rows={rows} loading={loading} error={error} onRetry={refresh} onEdit={setEditing} />
-    </section>
+    <div className="space-y-4">
+      {classes.length === 0 ? <StatePanel text="Create classes before assigning teachers. The class dropdown uses real class records only." compact /> : null}
+      {subjects.length === 0 ? <StatePanel text="Create subjects before assigning teachers. The subject dropdown uses real subject records only." compact /> : null}
+      {sections.length === 0 ? <StatePanel text="Create sections before assigning section-specific teachers. You can still use All sections." compact /> : null}
+      <section className="grid gap-4 xl:grid-cols-[380px_1fr]">
+        <ResourceForm config={dynamicConfig} editing={editing} onCancel={() => setEditing(null)} onSaved={(row) => {
+          setRows((current) => editing ? current.map((item) => item.id === row.id ? row : item) : [row, ...current]);
+          setEditing(null);
+          onChanged();
+          refresh();
+        }} />
+        <ResourceTable config={config} rows={rows} loading={loading} error={error} onRetry={refresh} onEdit={setEditing} />
+      </section>
+    </div>
   );
 }
 
@@ -974,6 +1024,27 @@ function normalizeFieldValue(value: any, type?: FieldType) {
 function shortDate(value: string) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? "Not available" : new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(date);
+}
+
+function optionLabelForClass(row: ResourceRow) {
+  const name = row.name ?? row.title ?? row.className ?? row.code ?? row.id;
+  const code = row.code ? ` (${row.code})` : "";
+  const status = row.status ? ` - ${humanize(row.status)}` : "";
+  return `${name}${code}${status}`;
+}
+
+function optionLabelForSection(row: ResourceRow) {
+  const className = row.class?.name ?? row.className ?? row.class?.code ?? "Class";
+  const sectionName = row.name ?? row.title ?? row.id;
+  const status = row.status ? ` - ${humanize(row.status)}` : "";
+  return `${className} / ${sectionName}${status}`;
+}
+
+function optionLabelForSubject(row: ResourceRow) {
+  const name = row.name ?? row.title ?? row.code ?? row.id;
+  const code = row.code ? ` (${row.code})` : "";
+  const status = row.status ? ` - ${humanize(row.status)}` : "";
+  return `${name}${code}${status}`;
 }
 
 function useDashboard(refreshKey: number) {

@@ -445,6 +445,7 @@ router.patch("/parents/:parentId/login-status", async (req, res, next) => {
     next(error);
   }
 });
+
 router.get("/:resource", (req, res, next) => {
   const resource = parseResource(req, res);
   if (!resource) return;

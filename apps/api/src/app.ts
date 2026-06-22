@@ -8,6 +8,7 @@ import { requestId } from "./middleware/request-id";
 import { apiSecurity } from "./middleware/api-security";
 import { authRoutes } from "./modules/auth/auth.routes";
 import { superAdminRoutes } from "./modules/super-admin/super-admin.routes";
+import { schoolAdminCoreSetupRoutes } from "./modules/school-admin/school-admin.core-setup.routes";
 import { schoolAdminRoutes } from "./modules/school-admin/school-admin.routes";
 import { teacherRoutes } from "./modules/teacher/teacher.routes";
 import { studentRoutes } from "./modules/student/student.routes";
@@ -70,6 +71,7 @@ export function createApp() {
 
   app.use("/v1/auth", authRoutes);
   app.use("/v1/super-admin", superAdminRoutes);
+  app.use("/v1/school-admin", schoolAdminCoreSetupRoutes);
   app.use("/v1/school-admin", schoolAdminRoutes);
   app.use("/v1/teacher", teacherRoutes);
   app.use("/v1/student", studentRoutes);

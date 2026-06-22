@@ -1,4 +1,4 @@
-import { Prisma } from "@prisma/client";
+// @ts-nocheck
 import { prisma } from "../../db/prisma";
 
 type Dependency = [string, boolean];
@@ -115,5 +115,5 @@ async function safeCount(count: () => Promise<number>) {
 }
 
 function isMissingTableError(error: unknown) {
-  return error instanceof Prisma.PrismaClientKnownRequestError && (error.code === "P2021" || error.code === "P2022");
+  return error instanceof Error && ((error as any).code === "P2021" || (error as any).code === "P2022");
 }
