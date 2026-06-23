@@ -148,6 +148,37 @@ router.get("/fees", async (req, res, next) => {
     next(error);
   }
 });
+router.get("/homework", async (req, res, next) => {
+  try {
+    const scope = await requireStudentScope(req, res);
+    if (!scope) return;
+    const query = pageQuerySchema.parse(req.query);
+    const where = withSearch("assignments", whereFor("assignments", scope), query.search, query.status);
+    const [rows, total] = await Promise.all([
+      prisma.teacherAssignment.findMany({ where, orderBy: { dueDate: "asc" }, skip: (query.page - 1) * query.pageSize, take: query.pageSize }),
+      prisma.teacherAssignment.count({ where })
+    ]);
+    return paginated(res, rows, query.page, query.pageSize, total);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/lms", async (req, res, next) => {
+  try {
+    const scope = await requireStudentScope(req, res);
+    if (!scope) return;
+    const query = pageQuerySchema.parse(req.query);
+    const where = withSearch("materials", whereFor("materials", scope), query.search, query.status);
+    const [rows, total] = await Promise.all([
+      prisma.teacherMaterial.findMany({ where, orderBy: { createdAt: "desc" }, skip: (query.page - 1) * query.pageSize, take: query.pageSize }),
+      prisma.teacherMaterial.count({ where })
+    ]);
+    return paginated(res, rows, query.page, query.pageSize, total);
+  } catch (error) {
+    next(error);
+  }
+});
 router.get("/:resource", async (req, res, next) => {
   try {
     const resource = parseResource(req, res);

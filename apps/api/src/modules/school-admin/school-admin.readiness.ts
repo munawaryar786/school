@@ -32,6 +32,8 @@ export async function buildSchoolReadiness(schoolId: string) {
     resultRecords,
     feeRecords,
     feePayments,
+    homeworkRecords,
+    lmsMaterials,
     libraryBooks,
     lmsProgress
   ] = await Promise.all([
@@ -53,11 +55,13 @@ export async function buildSchoolReadiness(schoolId: string) {
     db.teacherMark.count({ where: { schoolId } }),
     db.financeInvoice.count({ where: { schoolId } }),
     db.financePayment.count({ where: { schoolId } }),
+    db.teacherAssignment.count({ where: { schoolId } }),
+    db.teacherMaterial.count({ where: { schoolId } }),
     db.libraryBook.count({ where: { schoolId } }),
     db.lmsProgress.count({ where: { schoolId } })
   ]);
 
-  const counts = { academicYears, activeAcademicYears, classes, sections, subjects, admissions, students, teachers, teacherAssignments, parentGuardians, parentChildLinks, leaveRequests, attendanceRecords, timetableSlots, examRecords, resultRecords, feeRecords, feePayments, libraryBooks, lmsProgress };
+  const counts = { academicYears, activeAcademicYears, classes, sections, subjects, admissions, students, teachers, teacherAssignments, parentGuardians, parentChildLinks, leaveRequests, attendanceRecords, timetableSlots, examRecords, resultRecords, feeRecords, feePayments, homeworkRecords, lmsMaterials, libraryBooks, lmsProgress };
   const flags = {
     hasAcademicYear: academicYears > 0,
     hasActiveAcademicYear: activeAcademicYears > 0,
@@ -74,6 +78,8 @@ export async function buildSchoolReadiness(schoolId: string) {
     hasResult: resultRecords > 0,
     hasFee: feeRecords > 0,
     hasFeePayment: feePayments > 0,
+    hasHomework: homeworkRecords > 0,
+    hasLmsMaterial: lmsMaterials > 0,
     hasParentGuardian: parentGuardians > 0,
     hasParentChildLink: parentChildLinks > 0
   };
@@ -111,7 +117,7 @@ function buildModuleRules(flags: Record<string, boolean>, counts: Record<string,
     exams: { label: "Exams/Results", ready: flags.hasActiveAcademicYear && flags.hasClass && flags.hasSection && flags.hasSubject && flags.hasStudent && flags.hasExam && flags.hasResult, dependencies: [["Active academic year", flags.hasActiveAcademicYear], ["Class", flags.hasClass], ["Section", flags.hasSection], ["Subject", flags.hasSubject], ["Student", flags.hasStudent], ["Exam schedule", flags.hasExam], ["Result marks", flags.hasResult]], nextAction: flags.hasExam ? "Enter marks" : "Create exam schedules" },
     fees: { label: "Fees/Finance", ready: flags.hasStudent && flags.hasFee, dependencies: [["Student", flags.hasStudent], ["Fee records", flags.hasFee]], nextAction: flags.hasFee ? "Record payments" : flags.hasStudent ? "Create fee records" : "Create student profiles first" },
     library: { label: "Library", ready: flags.hasStudent && counts.libraryBooks > 0, dependencies: [["Student", flags.hasStudent], ["Library catalog", counts.libraryBooks > 0]], nextAction: flags.hasStudent ? "Open library catalog in a later phase" : "Create student profiles first" },
-    lms: { label: "LMS", ready: flags.hasClass && flags.hasSubject && flags.hasTeacherAssignment, dependencies: [["Class", flags.hasClass], ["Subject", flags.hasSubject], ["Teacher assignment", flags.hasTeacherAssignment]], nextAction: "Complete class, subject, and teacher assignment setup" },
+    lms: { label: "LMS", ready: flags.hasClass && flags.hasSubject && flags.hasTeacherAssignment && (flags.hasHomework || flags.hasLmsMaterial), dependencies: [["Class", flags.hasClass], ["Subject", flags.hasSubject], ["Teacher assignment", flags.hasTeacherAssignment], ["Homework", flags.hasHomework], ["Learning material", flags.hasLmsMaterial]], nextAction: flags.hasTeacherAssignment ? "Create homework and learning materials" : "Complete class, subject, and teacher assignment setup" },
     reading: { label: "Reading Program", ready: false, comingLater: true, dependencies: [["Library catalog", counts.libraryBooks > 0]], nextAction: "Build after library catalog is stable" },
     notices: { label: "Notices", ready: false, comingLater: true, dependencies: [["Audience rules", false]], nextAction: "Open notices in a later phase" },
     reports: { label: "Reports", ready: false, comingLater: true, dependencies: [["Real module data", flags.hasStudent || flags.hasTeacherAssignment]], nextAction: "Open reports after module workflows mature" },

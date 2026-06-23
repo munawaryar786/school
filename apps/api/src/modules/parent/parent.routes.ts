@@ -65,7 +65,7 @@ const createSchemas = {
   })
 } as const;
 
-type Resource = "children" | "attendance" | "timetable" | "results" | "performance" | "homework" | "fees" | "payments" | "communication";
+type Resource = "children" | "attendance" | "timetable" | "results" | "performance" | "homework" | "lms" | "fees" | "payments" | "communication";
 type WritableResource = keyof typeof createSchemas;
 type ParentChild = {
   id: string;
@@ -87,7 +87,7 @@ type ParentScope = {
   classNames: string[];
 };
 
-const resources: Resource[] = ["children", "attendance", "timetable", "results", "performance", "homework", "fees", "payments", "communication"];
+const resources: Resource[] = ["children", "attendance", "timetable", "results", "performance", "homework", "lms", "fees", "payments", "communication"];
 
 const columnsByResource: Record<Resource, string[]> = {
   children: ["id", "admissionNumber", "name", "guardianName", "guardianPhone", "className", "status"],
@@ -96,6 +96,7 @@ const columnsByResource: Record<Resource, string[]> = {
   results: ["id", "studentName", "className", "subject", "assessment", "marksObtained", "maxMarks", "status"],
   performance: ["id", "studentName", "className", "attendanceRate", "averageScore", "homeworkOpen", "pendingFees", "paidPayments"],
   homework: ["id", "title", "className", "subject", "dueDate", "maxMarks", "status"],
+  lms: ["id", "title", "className", "subject", "resourceType", "url", "status"],
   fees: ["id", "invoiceNumber", "studentName", "feeTitle", "amount", "dueDate", "status"],
   payments: ["id", "studentName", "feeTitle", "amount", "paidOn", "method", "status", "receiptNumber"],
   communication: ["id", "source", "studentName", "channel", "subject", "message", "status", "createdAt"]
@@ -427,6 +428,7 @@ async function listResource(resource: Resource, scope: ParentScope, search?: str
     timetable: prisma.timetableSlot,
     results: prisma.teacherMark,
     homework: prisma.teacherAssignment,
+    lms: prisma.teacherMaterial,
     fees: prisma.financeInvoice,
     payments: prisma.parentFeePayment
   };
@@ -445,6 +447,8 @@ function whereFor(resource: Exclude<Resource, "children" | "performance">, scope
       return { schoolId, studentName: { in: scope.childNames } };
     case "homework":
       return { schoolId, className: { in: scope.classNames }, status: { not: "DRAFT" } };
+    case "lms":
+      return { schoolId, className: { in: scope.classNames }, status: "PUBLISHED" };
     case "fees":
       return { schoolId, studentName: { in: scope.childNames } };
     case "payments":
@@ -507,6 +511,7 @@ function withSearch(where: any, search: string | undefined, status: string | und
     timetable: ["className", "subject", "teacher", "dayOfWeek"],
     results: ["studentName", "className", "subject", "assessment"],
     homework: ["title", "className", "subject"],
+    lms: ["title", "className", "subject", "resourceType", "url"],
     fees: ["invoiceNumber", "studentName", "feeTitle"],
     payments: ["studentName", "feeTitle", "method", "receiptNumber"]
   };
@@ -527,6 +532,7 @@ function orderByFor(resource: Resource) {
   if (resource === "timetable") return [{ dayOfWeek: "asc" }, { startsAt: "asc" }];
   if (resource === "results") return { createdAt: "desc" };
   if (resource === "homework") return { dueDate: "asc" };
+  if (resource === "lms") return { createdAt: "desc" };
   if (resource === "fees") return { dueDate: "asc" };
   if (resource === "payments") return { paidOn: "desc" };
   return { createdAt: "desc" };

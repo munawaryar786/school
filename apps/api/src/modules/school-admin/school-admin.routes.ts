@@ -690,6 +690,57 @@ router.patch("/fees/:id/payment", async (req, res, next) => {
     next(error);
   }
 });
+router.get("/homework", async (req, res, next) => {
+  try {
+    const schoolId = requireSchool(req, res);
+    if (!schoolId) return;
+    const query = pageQuerySchema.parse(req.query);
+    const where: any = { schoolId };
+    if (query.status) where.status = query.status;
+    if (query.search) where.OR = ["title", "className", "subject"].map((field) => ({ [field]: { contains: query.search, mode: "insensitive" } }));
+    const [rows, total] = await Promise.all([
+      prisma.teacherAssignment.findMany({ where, orderBy: { dueDate: "asc" }, skip: (query.page - 1) * query.pageSize, take: query.pageSize, include: { teacher: { select: { id: true, name: true, email: true } } } }),
+      prisma.teacherAssignment.count({ where })
+    ]);
+    return paginated(res, rows, query.page, query.pageSize, total);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/lms/summary", async (req, res, next) => {
+  try {
+    const schoolId = requireSchool(req, res);
+    if (!schoolId) return;
+    const [homework, materials, byHomeworkStatus, byMaterialStatus] = await Promise.all([
+      prisma.teacherAssignment.count({ where: { schoolId } }),
+      prisma.teacherMaterial.count({ where: { schoolId } }),
+      prisma.teacherAssignment.groupBy({ by: ["status"], where: { schoolId }, _count: { _all: true }, orderBy: { status: "asc" } }),
+      prisma.teacherMaterial.groupBy({ by: ["status"], where: { schoolId }, _count: { _all: true }, orderBy: { status: "asc" } })
+    ]);
+    return ok(res, { homework, materials, total: homework + materials, byHomeworkStatus: byHomeworkStatus.map((item: any) => ({ status: item.status, count: item._count._all })), byMaterialStatus: byMaterialStatus.map((item: any) => ({ status: item.status, count: item._count._all })) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/lms", async (req, res, next) => {
+  try {
+    const schoolId = requireSchool(req, res);
+    if (!schoolId) return;
+    const query = pageQuerySchema.parse(req.query);
+    const where: any = { schoolId };
+    if (query.status) where.status = query.status;
+    if (query.search) where.OR = ["title", "className", "subject", "resourceType", "url"].map((field) => ({ [field]: { contains: query.search, mode: "insensitive" } }));
+    const [rows, total] = await Promise.all([
+      prisma.teacherMaterial.findMany({ where, orderBy: { createdAt: "desc" }, skip: (query.page - 1) * query.pageSize, take: query.pageSize, include: { teacher: { select: { id: true, name: true, email: true } } } }),
+      prisma.teacherMaterial.count({ where })
+    ]);
+    return paginated(res, rows, query.page, query.pageSize, total);
+  } catch (error) {
+    next(error);
+  }
+});
 router.get("/exams", async (req, res, next) => {
   try {
     const schoolId = requireSchool(req, res);

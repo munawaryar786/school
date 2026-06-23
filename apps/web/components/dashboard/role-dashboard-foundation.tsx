@@ -281,8 +281,10 @@ export function RoleDashboardFoundation({ kind }: { kind: keyof typeof configs }
 
           {kind === "teacher" ? <TeacherTimetablePanel /> : null}
           {kind === "teacher" ? <TeacherAttendanceManager /> : null}
+          {kind === "teacher" ? <TeacherHomeworkLmsPanel /> : null}
           {kind === "student" ? <StudentTimetablePanel /> : null}
           {kind === "student" ? <StudentAttendancePanel /> : null}
+          {kind === "student" ? <StudentHomeworkLmsPanel /> : null}
           {kind === "student" ? <StudentFeesPanel /> : null}
           {kind === "finance" ? <FinanceFeesPanel /> : null}
         </>
@@ -326,6 +328,93 @@ function TimetableList({ title, records, loading, error, emptyText }: { title: s
       {loading ? <StatePanel text="Loading timetable" compact /> : error ? <StatePanel text={error} tone="error" compact /> : records.length === 0 ? <StatePanel text={emptyText} compact /> : (
         <div className="mt-4 grid gap-3 md:grid-cols-2">
           {records.map((row) => <div key={String(row.id)} className="rounded-md border border-border bg-background p-3 text-sm"><p className="font-medium">{stringValue(row.subject)} - {stringValue(row.className)}</p><p className="mt-1 text-muted-foreground">{stringValue(row.dayOfWeek).replaceAll("_", " ")} - {stringValue(row.startsAt)} to {stringValue(row.endsAt)}</p><p className="mt-1 text-muted-foreground">Teacher: {stringValue(row.teacher)}</p></div>)}
+        </div>
+      )}
+    </section>
+  );
+}
+function assignmentKeyFor(item: any) {
+  const className = stringValue(item?.class?.name);
+  const subject = stringValue(item?.subject?.name);
+  return className === "Not available" || subject === "Not available" ? "" : className + "||" + subject;
+}
+
+function uniqueAssignmentPairs(assignments: Array<Row>) {
+  const pairs = assignments.map((item: any) => ({ key: assignmentKeyFor(item), className: stringValue(item?.class?.name), subject: stringValue(item?.subject?.name) })).filter((item) => item.key);
+  return Array.from(new Map(pairs.map((item) => [item.key, item])).values());
+}
+
+function HomeworkMaterialLists({ homeworkRows, materialRows }: { homeworkRows: Row[]; materialRows: Row[] }) {
+  return <div className="grid gap-4 lg:grid-cols-2"><MiniRecordList title="Homework" rows={homeworkRows} emptyText="No homework created yet." /><MiniRecordList title="Learning Materials" rows={materialRows} emptyText="No learning materials created yet." /></div>;
+}
+
+function MiniRecordList({ title, rows, emptyText }: { title: string; rows: Row[]; emptyText: string }) {
+  return <div className="rounded-md border border-border bg-background p-3"><h3 className="text-sm font-semibold">{title}</h3>{rows.length === 0 ? <StatePanel text={emptyText} compact /> : <div className="mt-3 space-y-2">{rows.slice(0, 6).map((row) => <div key={String(row.id)} className="rounded-md border border-border bg-surface p-3 text-sm"><p className="font-medium">{stringValue(row.title)}</p><p className="mt-1 text-muted-foreground">{stringValue(row.className)} - {stringValue(row.subject)} - {stringValue(row.status)}</p>{row.dueDate ? <p className="mt-1 text-muted-foreground">Due {formatDate(String(row.dueDate))}</p> : null}</div>)}</div>}</div>;
+}
+function TeacherHomeworkLmsPanel() {
+  const today = new Date().toISOString().slice(0, 10);
+  const [context, setContext] = useState<TeacherAttendanceContext | null>(null);
+  const [homeworkRows, setHomeworkRows] = useState<Row[]>([]);
+  const [materialRows, setMaterialRows] = useState<Row[]>([]);
+  const [assignmentKey, setAssignmentKey] = useState("");
+  const [homework, setHomework] = useState({ title: "", dueDate: today, maxMarks: 100, status: "PUBLISHED" });
+  const [material, setMaterial] = useState({ title: "", resourceType: "LINK", url: "", status: "PUBLISHED" });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  useEffect(() => {
+    setLoading(true);
+    Promise.all([api("teacher", "attendance/context"), api("teacher", "homework?pageSize=20"), api("teacher", "lms?pageSize=20")])
+      .then(([contextPayload, homeworkPayload, materialPayload]) => {
+        const data = contextPayload.data ?? {};
+        const assignments = Array.isArray(data.assignments) ? data.assignments : [];
+        setContext(data);
+        setHomeworkRows(Array.isArray(homeworkPayload.data) ? homeworkPayload.data : []);
+        setMaterialRows(Array.isArray(materialPayload.data) ? materialPayload.data : []);
+        setAssignmentKey((current) => current || assignmentKeyFor(assignments[0]));
+      })
+      .catch((caught) => setMessage({ tone: "error", text: caught instanceof Error ? caught.message : "Homework and LMS data could not load." }))
+      .finally(() => setLoading(false));
+  }, [refreshKey]);
+
+  const pairs = uniqueAssignmentPairs(context?.assignments ?? []);
+  const selected = pairs.find((pair) => pair.key === assignmentKey) ?? pairs[0] ?? null;
+
+  async function createHomework() {
+    if (!selected || !homework.title || !homework.dueDate) { setMessage({ tone: "error", text: "Select an assigned class/subject and enter homework title and due date." }); return; }
+    setSaving(true); setMessage(null);
+    try {
+      const payload = await api("teacher", "homework", { method: "POST", body: JSON.stringify({ ...homework, className: selected.className, subject: selected.subject }) });
+      setHomeworkRows((current) => [payload.data, ...current]);
+      setHomework({ title: "", dueDate: today, maxMarks: 100, status: "PUBLISHED" });
+      setMessage({ tone: "success", text: "Homework created." });
+    } catch (caught) { setMessage({ tone: "error", text: caught instanceof Error ? caught.message : "Homework could not be created." }); }
+    finally { setSaving(false); }
+  }
+
+  async function createMaterial() {
+    if (!selected || !material.title || !material.url) { setMessage({ tone: "error", text: "Select an assigned class/subject and enter material title and URL." }); return; }
+    setSaving(true); setMessage(null);
+    try {
+      const payload = await api("teacher", "lms", { method: "POST", body: JSON.stringify({ ...material, className: selected.className, subject: selected.subject }) });
+      setMaterialRows((current) => [payload.data, ...current]);
+      setMaterial({ title: "", resourceType: "LINK", url: "", status: "PUBLISHED" });
+      setMessage({ tone: "success", text: "Learning material created." });
+    } catch (caught) { setMessage({ tone: "error", text: caught instanceof Error ? caught.message : "Learning material could not be created." }); }
+    finally { setSaving(false); }
+  }
+
+  return (
+    <section className="rounded-lg border border-border bg-surface p-4 shadow-panel">
+      <div className="flex flex-col gap-2 border-b border-border pb-3 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-base font-semibold">Homework / LMS</h2><p className="mt-1 text-sm text-muted-foreground">Create homework and learning materials only for assigned classes and subjects.</p></div><button className="inline-flex min-h-9 items-center justify-center gap-2 rounded-md border border-border bg-background px-3 text-sm font-medium" onClick={() => setRefreshKey((value) => value + 1)} type="button"><RefreshCw aria-hidden={true} size={15} />Refresh</button></div>
+      {message ? <div className={`mt-4 rounded-md border p-3 text-sm ${message.tone === "success" ? "border-success/30 bg-success/10 text-success" : "border-error/30 bg-error/10 text-error"}`}>{message.text}</div> : null}
+      {loading ? <StatePanel text="Loading homework and LMS setup" compact /> : pairs.length === 0 ? <StatePanel text="Ask School Admin to assign class and subject before creating homework." compact /> : (
+        <div className="mt-4 space-y-5">
+          <label className="grid gap-1 text-sm font-medium">Assigned class / subject<select className="min-h-10 rounded-md border border-border bg-background px-3 text-sm" value={assignmentKey} onChange={(event) => setAssignmentKey(event.target.value)}>{pairs.map((pair) => <option key={pair.key} value={pair.key}>{pair.className} - {pair.subject}</option>)}</select></label>
+          <div className="grid gap-4 lg:grid-cols-2"><div className="rounded-md border border-border bg-background p-3"><h3 className="text-sm font-semibold">Create homework</h3><div className="mt-3 grid gap-3"><input className="min-h-10 rounded-md border border-border bg-surface px-3 text-sm" placeholder="Homework title" value={homework.title} onChange={(event) => setHomework((current) => ({ ...current, title: event.target.value }))} /><input className="min-h-10 rounded-md border border-border bg-surface px-3 text-sm" type="date" value={homework.dueDate} onChange={(event) => setHomework((current) => ({ ...current, dueDate: event.target.value }))} /><input className="min-h-10 rounded-md border border-border bg-surface px-3 text-sm" min={1} type="number" value={homework.maxMarks} onChange={(event) => setHomework((current) => ({ ...current, maxMarks: Number(event.target.value) }))} /><select className="min-h-10 rounded-md border border-border bg-surface px-3 text-sm" value={homework.status} onChange={(event) => setHomework((current) => ({ ...current, status: event.target.value }))}><option value="DRAFT">Draft</option><option value="PUBLISHED">Published</option></select><button className="min-h-10 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-60" disabled={saving} onClick={createHomework} type="button">Create homework</button></div></div><div className="rounded-md border border-border bg-background p-3"><h3 className="text-sm font-semibold">Create learning material</h3><div className="mt-3 grid gap-3"><input className="min-h-10 rounded-md border border-border bg-surface px-3 text-sm" placeholder="Material title" value={material.title} onChange={(event) => setMaterial((current) => ({ ...current, title: event.target.value }))} /><select className="min-h-10 rounded-md border border-border bg-surface px-3 text-sm" value={material.resourceType} onChange={(event) => setMaterial((current) => ({ ...current, resourceType: event.target.value }))}>{["NOTE", "VIDEO", "LINK", "PDF", "DOCUMENT", "OTHER"].map((value) => <option key={value} value={value}>{value}</option>)}</select><input className="min-h-10 rounded-md border border-border bg-surface px-3 text-sm" placeholder="Content URL or reference" value={material.url} onChange={(event) => setMaterial((current) => ({ ...current, url: event.target.value }))} /><select className="min-h-10 rounded-md border border-border bg-surface px-3 text-sm" value={material.status} onChange={(event) => setMaterial((current) => ({ ...current, status: event.target.value }))}><option value="DRAFT">Draft</option><option value="PUBLISHED">Published</option></select><button className="min-h-10 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-60" disabled={saving} onClick={createMaterial} type="button">Create material</button></div></div></div>
+          <HomeworkMaterialLists homeworkRows={homeworkRows} materialRows={materialRows} />
         </div>
       )}
     </section>
@@ -546,6 +635,23 @@ function StudentAttendancePanel() {
   );
 }
 
+function StudentHomeworkLmsPanel() {
+  const [homeworkRows, setHomeworkRows] = useState<Row[]>([]);
+  const [materialRows, setMaterialRows] = useState<Row[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    setLoading(true);
+    Promise.all([api("student", "homework?pageSize=20"), api("student", "lms?pageSize=20")])
+      .then(([homeworkPayload, materialPayload]) => {
+        setHomeworkRows(Array.isArray(homeworkPayload.data) ? homeworkPayload.data : []);
+        setMaterialRows(Array.isArray(materialPayload.data) ? materialPayload.data : []);
+      })
+      .catch((caught) => setError(caught instanceof Error ? caught.message : "Homework and LMS could not load."))
+      .finally(() => setLoading(false));
+  }, []);
+  return <section className="rounded-lg border border-border bg-surface p-4 shadow-panel"><h2 className="text-base font-semibold">Homework / Learning Materials</h2>{loading ? <StatePanel text="Loading homework and LMS" compact /> : error ? <StatePanel text={error} tone="error" compact /> : <HomeworkMaterialLists homeworkRows={homeworkRows} materialRows={materialRows} />}</section>;
+}
 function StudentFeesPanel() {
   const [records, setRecords] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);

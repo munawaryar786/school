@@ -83,6 +83,8 @@ type FeeRecord = {
   dueDate: string;
   status: string;
 };
+type HomeworkRecord = { id: string; title: string; className: string; subject: string; dueDate: string; maxMarks?: number; status: string };
+type LmsRecord = { id: string; title: string; className: string; subject: string; resourceType?: string; url?: string; status: string };
 type LeaveForm = {
   type: string;
   startDate: string;
@@ -124,6 +126,8 @@ export function ParentPortal() {
   const [timetableRecords, setTimetableRecords] = useState<TimetableRecord[]>([]);
   const [resultRecords, setResultRecords] = useState<ResultRecord[]>([]);
   const [feeRecords, setFeeRecords] = useState<FeeRecord[]>([]);
+  const [homeworkRecords, setHomeworkRecords] = useState<HomeworkRecord[]>([]);
+  const [lmsRecords, setLmsRecords] = useState<LmsRecord[]>([]);
   const [form, setForm] = useState<LeaveForm>(emptyForm);
   const [loading, setLoading] = useState(true);
   const [childLoading, setChildLoading] = useState(false);
@@ -153,6 +157,8 @@ export function ParentPortal() {
       setTimetableRecords([]);
       setResultRecords([]);
       setFeeRecords([]);
+      setHomeworkRecords([]);
+      setLmsRecords([]);
       return;
     }
     setChildLoading(true);
@@ -163,15 +169,19 @@ export function ParentPortal() {
       api<AttendanceRecord[]>("attendance?pageSize=100"),
       api<TimetableRecord[]>("timetable?pageSize=100"),
       api<ResultRecord[]>("results?pageSize=100"),
-      api<FeeRecord[]>("fees?pageSize=100")
+      api<FeeRecord[]>("fees?pageSize=100"),
+      api<HomeworkRecord[]>("homework?pageSize=100"),
+      api<LmsRecord[]>("lms?pageSize=100")
     ])
-      .then(([nextSummary, nextRequests, nextAttendance, nextTimetable, nextResults, nextFees]) => {
+      .then(([nextSummary, nextRequests, nextAttendance, nextTimetable, nextResults, nextFees, nextHomework, nextLms]) => {
         setSummary(nextSummary ?? null);
         setLeaveRequests(Array.isArray(nextRequests) ? nextRequests : []);
         setAttendanceRecords(Array.isArray(nextAttendance) ? nextAttendance.filter((row) => row.studentName === nextSummary?.child?.name).slice(0, 10) : []);
         setTimetableRecords(Array.isArray(nextTimetable) ? nextTimetable.filter((row) => row.className === nextSummary?.child?.className).slice(0, 10) : []);
         setResultRecords(Array.isArray(nextResults) ? nextResults.filter((row) => row.studentName === nextSummary?.child?.name).slice(0, 10) : []);
         setFeeRecords(Array.isArray(nextFees) ? nextFees.filter((row) => row.studentName === nextSummary?.child?.name).slice(0, 10) : []);
+        setHomeworkRecords(Array.isArray(nextHomework) ? nextHomework.filter((row) => row.className === nextSummary?.child?.className).slice(0, 10) : []);
+        setLmsRecords(Array.isArray(nextLms) ? nextLms.filter((row) => row.className === nextSummary?.child?.className).slice(0, 10) : []);
       })
       .catch((caught) => setError(caught instanceof Error ? caught.message : "Child dashboard could not load."))
       .finally(() => setChildLoading(false));
@@ -254,6 +264,8 @@ export function ParentPortal() {
           <TimetableRecords records={timetableRecords} />
           <ResultRecords records={resultRecords} />
           <FeeRecords records={feeRecords} />
+          <HomeworkRecords records={homeworkRecords} />
+          <LmsRecords records={lmsRecords} />
 
           <section className="rounded-lg border border-border bg-surface p-4 shadow-panel">
             <div className="flex items-center gap-2">
@@ -383,6 +395,23 @@ function ResultRecords({ records }: { records: ResultRecord[] }) {
           })}
         </div>
       )}
+    </section>
+  );
+}
+function HomeworkRecords({ records }: { records: HomeworkRecord[] }) {
+  return (
+    <section className="rounded-lg border border-border bg-surface p-4 shadow-panel">
+      <div className="flex items-center gap-2"><FileText aria-hidden={true} className="text-primary" size={18} /><h2 className="text-base font-semibold">Homework</h2></div>
+      {records.length === 0 ? <StatePanel text="No homework has been published for this child yet." compact /> : <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{records.map((record) => <article key={record.id} className="rounded-md border border-border bg-background p-3 text-sm"><p className="font-semibold">{record.title}</p><p className="mt-1 text-muted-foreground">{record.subject} - Due {formatDate(record.dueDate)}</p><p className="mt-1 text-muted-foreground">{humanize(record.status)}</p></article>)}</div>}
+    </section>
+  );
+}
+
+function LmsRecords({ records }: { records: LmsRecord[] }) {
+  return (
+    <section className="rounded-lg border border-border bg-surface p-4 shadow-panel">
+      <div className="flex items-center gap-2"><BookOpen aria-hidden={true} className="text-primary" size={18} /><h2 className="text-base font-semibold">Learning Materials</h2></div>
+      {records.length === 0 ? <StatePanel text="No learning materials have been published for this child yet." compact /> : <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{records.map((record) => <article key={record.id} className="rounded-md border border-border bg-background p-3 text-sm"><p className="font-semibold">{record.title}</p><p className="mt-1 text-muted-foreground">{record.subject} - {humanize(record.resourceType ?? "LINK")}</p><p className="mt-1 text-muted-foreground">{humanize(record.status)}</p></article>)}</div>}
     </section>
   );
 }

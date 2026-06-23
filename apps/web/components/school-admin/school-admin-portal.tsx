@@ -10,6 +10,7 @@ import {
   Clock3,
   CheckCircle2,
   ClipboardList,
+  FileText,
   GraduationCap,
   Library,
   Megaphone,
@@ -127,15 +128,14 @@ const modules: ModuleConfig[] = [
   { id: "settings", label: "Settings", icon: Settings, purpose: "School profile, campuses, academic defaults, branding, and provider settings.", status: "Preview", nextAction: "Configure once settings workflow is enabled", requirements: "Needs school profile and provider configuration records." }
 ];
 
-const openedModules = new Set<ModuleId>(["academic", "classes", "sections", "subjects", "admissions", "students", "teachers", "parents", "attendance", "timetable", "exams", "fees"]);
+const openedModules = new Set<ModuleId>(["academic", "classes", "sections", "subjects", "admissions", "students", "teachers", "parents", "attendance", "timetable", "exams", "fees", "lms"]);
 const lockedDependencyText: Partial<Record<ModuleId, string>> = {
   attendance: "Locked until academic years, classes, sections, students, and teacher assignment foundations are complete.",
   timetable: "Locked until classes, sections, subjects, and teacher assignments are available.",
   exams: "Locked until academic setup and subject structure are ready.",
-  fees: "Locked until student profiles and finance setup are opened in a later phase.",
   library: "Locked until the library circulation phase opens catalog and copy workflows.",
   reading: "Locked until library catalog and reading-program models are implemented.",
-  lms: "Locked until courses, teacher assignments, and LMS content models are opened."
+  lms: "Create homework and learning materials after teacher assignments are ready."
 };
 
 const statusOptions = [{ value: "ACTIVE", label: "Active" }, { value: "INACTIVE", label: "Inactive" }];
@@ -351,6 +351,8 @@ export function SchoolAdminPortal() {
           <ExamsWorkspace refreshKey={refreshKey} onChanged={refreshAll} />
         ) : activeModule === "fees" ? (
           <FeesWorkspace refreshKey={refreshKey} onChanged={refreshAll} />
+        ) : activeModule === "lms" ? (
+          <LmsWorkspace refreshKey={refreshKey} />
         ) : openedModules.has(activeModule) ? (
           <CorePeopleWorkspace moduleId={activeModule} refreshKey={refreshKey} onChanged={refreshAll} />
         ) : (
@@ -382,7 +384,7 @@ function Dashboard({ refreshKey, readiness, onOpenModule }: { refreshKey: number
     ["Fee Records", dashboard.metrics.fees, "Fee records available", WalletCards],
     ["Exam Records", dashboard.metrics.exams, "Exam records available", ClipboardList],
     ["Library Books", dashboard.metrics.libraryBooks, "Book records in this school", Library],
-    ["LMS Progress", dashboard.metrics.lmsProgress, "LMS progress records available", Sparkles]
+    ["LMS Materials", readiness.data?.counts?.lmsMaterials ?? dashboard.metrics.lmsProgress, "Learning materials available", Sparkles]
   ] as const;
 
   return (
@@ -540,6 +542,26 @@ function LeaveRequestReviewQueue() {
   );
 }
 
+function LmsWorkspace({ refreshKey }: { refreshKey: number }) {
+  const homework = useResourceList("homework", refreshKey);
+  const materials = useResourceList("lms", refreshKey);
+  const [summary, setSummary] = useState<ResourceRow | null>(null);
+  useEffect(() => { api("lms/summary").then((payload: ApiOne<ResourceRow>) => setSummary(payload.data ?? null)).catch(() => setSummary(null)); }, [refreshKey, homework.rows.length, materials.rows.length]);
+  return (
+    <div className="space-y-5">
+      <section className="rounded-lg border border-border bg-surface p-5 shadow-panel"><StatusBadge status="Ready" /><h2 className="mt-3 text-2xl font-semibold">LMS / Homework</h2><p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">Monitor teacher-created homework and learning materials from real assigned class and subject records.</p></section>
+      <section className="grid gap-4 md:grid-cols-3"><MetricCard label="Homework" value={Number(summary?.homework ?? homework.rows.length)} detail="Teacher homework records" Icon={FileText} /><MetricCard label="Learning materials" value={Number(summary?.materials ?? materials.rows.length)} detail="Teacher LMS materials" Icon={BookOpen} /><MetricCard label="Total LMS records" value={Number(summary?.total ?? homework.rows.length + materials.rows.length)} detail="Homework and materials" Icon={Sparkles} /></section>
+      <LmsMonitorTable title="Homework / Assignments" rows={homework.rows} loading={homework.loading} error={homework.error} onRetry={homework.refresh} emptyText="No homework has been created yet." type="homework" />
+      <LmsMonitorTable title="Learning Materials" rows={materials.rows} loading={materials.loading} error={materials.error} onRetry={materials.refresh} emptyText="No learning materials have been created yet." type="material" />
+    </div>
+  );
+}
+
+function LmsMonitorTable({ title, rows, loading, error, onRetry, emptyText, type }: { title: string; rows: ResourceRow[]; loading: boolean; error: string | null; onRetry: () => void; emptyText: string; type: "homework" | "material" }) {
+  return (
+    <section className="rounded-lg border border-border bg-surface shadow-panel"><div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3"><h3 className="text-base font-semibold">{title}</h3><span className="rounded-md border border-border bg-background px-2 py-1 text-sm font-medium">{formatNumber(rows.length)}</span></div>{loading ? <StatePanel text="Loading LMS records" compact /> : error ? <StatePanel text={error} tone="error" compact onRetry={onRetry} /> : rows.length === 0 ? <StatePanel text={emptyText} compact /> : <div className="overflow-x-auto"><table className="min-w-full divide-y divide-border text-sm"><thead className="bg-muted/40 text-left text-xs uppercase text-muted-foreground"><tr><th className="px-4 py-3 font-semibold">Title</th><th className="px-4 py-3 font-semibold">Class</th><th className="px-4 py-3 font-semibold">Subject</th><th className="px-4 py-3 font-semibold">Teacher</th><th className="px-4 py-3 font-semibold">{type === "homework" ? "Due" : "Type"}</th><th className="px-4 py-3 font-semibold">Status</th></tr></thead><tbody className="divide-y divide-border">{rows.map((row) => <tr key={row.id}><td className="px-4 py-3">{row.title}</td><td className="px-4 py-3">{row.className}</td><td className="px-4 py-3">{row.subject}</td><td className="px-4 py-3">{row.teacher?.name ?? row.teacher?.email ?? "Teacher"}</td><td className="px-4 py-3">{type === "homework" ? shortDate(row.dueDate) : humanize(String(row.resourceType ?? ""))}</td><td className="px-4 py-3">{humanize(row.status ?? "")}</td></tr>)}</tbody></table></div>}</section>
+  );
+}
 function FeesWorkspace({ refreshKey, onChanged }: { refreshKey: number; onChanged: () => void }) {
   const emptyForm = { studentId: "", feeTitle: "", amount: 0, dueDate: new Date().toISOString().slice(0, 10), status: "UNPAID" };
   const { rows, loading, error, refresh, setRows } = useResourceList("fees", refreshKey);
@@ -877,7 +899,8 @@ function SetupCoach({ dashboard, readiness, onOpenModule }: { dashboard: ReturnT
     { label: "Create exam schedules", done: flags?.hasExam ?? dashboard.metrics.exams > 0, count: readiness?.counts?.examRecords ?? dashboard.metrics.exams, moduleId: "exams" as ModuleId, action: "Open exams" },
     { label: "Enter marks", done: flags?.hasResult ?? false, count: readiness?.counts?.resultRecords ?? 0, moduleId: "exams" as ModuleId, action: "Review results" },
     { label: "Create fee records", done: flags?.hasFee ?? dashboard.metrics.fees > 0, count: readiness?.counts?.feeRecords ?? dashboard.metrics.fees, moduleId: "fees" as ModuleId, action: "Open fees" },
-    { label: "Record payments", done: flags?.hasFeePayment ?? false, count: readiness?.counts?.feePayments ?? 0, moduleId: "fees" as ModuleId, action: "Record payments" }
+    { label: "Record payments", done: flags?.hasFeePayment ?? false, count: readiness?.counts?.feePayments ?? 0, moduleId: "fees" as ModuleId, action: "Record payments" },
+    { label: "Create homework and learning materials", done: (flags?.hasHomework ?? false) || (flags?.hasLmsMaterial ?? false), count: (readiness?.counts?.homeworkRecords ?? 0) + (readiness?.counts?.lmsMaterials ?? 0), moduleId: "lms" as ModuleId, action: "Open LMS" }
   ] as const;
   const complete = steps.filter((step) => step.done).length;
 
