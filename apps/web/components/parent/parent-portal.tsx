@@ -72,6 +72,17 @@ type TimetableRecord = {
   endsAt: string;
   status?: string | null;
 };
+type FeeRecord = {
+  id: string;
+  invoiceNumber?: string | null;
+  studentName: string;
+  feeTitle: string;
+  amount: number;
+  paidAmount?: number;
+  balanceAmount?: number;
+  dueDate: string;
+  status: string;
+};
 type LeaveForm = {
   type: string;
   startDate: string;
@@ -112,6 +123,7 @@ export function ParentPortal() {
   const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>([]);
   const [timetableRecords, setTimetableRecords] = useState<TimetableRecord[]>([]);
   const [resultRecords, setResultRecords] = useState<ResultRecord[]>([]);
+  const [feeRecords, setFeeRecords] = useState<FeeRecord[]>([]);
   const [form, setForm] = useState<LeaveForm>(emptyForm);
   const [loading, setLoading] = useState(true);
   const [childLoading, setChildLoading] = useState(false);
@@ -140,6 +152,7 @@ export function ParentPortal() {
       setAttendanceRecords([]);
       setTimetableRecords([]);
       setResultRecords([]);
+      setFeeRecords([]);
       return;
     }
     setChildLoading(true);
@@ -149,14 +162,16 @@ export function ParentPortal() {
       api<LeaveRequest[]>(`children/${selectedChildId}/leave-requests`),
       api<AttendanceRecord[]>("attendance?pageSize=100"),
       api<TimetableRecord[]>("timetable?pageSize=100"),
-      api<ResultRecord[]>("results?pageSize=100")
+      api<ResultRecord[]>("results?pageSize=100"),
+      api<FeeRecord[]>("fees?pageSize=100")
     ])
-      .then(([nextSummary, nextRequests, nextAttendance, nextTimetable, nextResults]) => {
+      .then(([nextSummary, nextRequests, nextAttendance, nextTimetable, nextResults, nextFees]) => {
         setSummary(nextSummary ?? null);
         setLeaveRequests(Array.isArray(nextRequests) ? nextRequests : []);
         setAttendanceRecords(Array.isArray(nextAttendance) ? nextAttendance.filter((row) => row.studentName === nextSummary?.child?.name).slice(0, 10) : []);
         setTimetableRecords(Array.isArray(nextTimetable) ? nextTimetable.filter((row) => row.className === nextSummary?.child?.className).slice(0, 10) : []);
         setResultRecords(Array.isArray(nextResults) ? nextResults.filter((row) => row.studentName === nextSummary?.child?.name).slice(0, 10) : []);
+        setFeeRecords(Array.isArray(nextFees) ? nextFees.filter((row) => row.studentName === nextSummary?.child?.name).slice(0, 10) : []);
       })
       .catch((caught) => setError(caught instanceof Error ? caught.message : "Child dashboard could not load."))
       .finally(() => setChildLoading(false));
@@ -238,6 +253,7 @@ export function ParentPortal() {
           <AttendanceRecords records={attendanceRecords} />
           <TimetableRecords records={timetableRecords} />
           <ResultRecords records={resultRecords} />
+          <FeeRecords records={feeRecords} />
 
           <section className="rounded-lg border border-border bg-surface p-4 shadow-panel">
             <div className="flex items-center gap-2">
@@ -365,6 +381,27 @@ function ResultRecords({ records }: { records: ResultRecord[] }) {
             const percent = record.maxMarks > 0 ? Math.round((record.marksObtained / record.maxMarks) * 100) : null;
             return <article key={record.id} className="rounded-md border border-border bg-background p-3 text-sm"><p className="font-semibold">{record.assessment}</p><p className="mt-1 text-muted-foreground">{record.subject} - {record.marksObtained}/{record.maxMarks}{percent == null ? "" : ` (${percent}%)`}</p><p className="mt-1 text-muted-foreground">{humanize(record.status)}</p></article>;
           })}
+        </div>
+      )}
+    </section>
+  );
+}
+function FeeRecords({ records }: { records: FeeRecord[] }) {
+  return (
+    <section className="rounded-lg border border-border bg-surface p-4 shadow-panel">
+      <div className="flex items-center gap-2">
+        <WalletCards aria-hidden={true} className="text-primary" size={18} />
+        <h2 className="text-base font-semibold">Fee Status</h2>
+      </div>
+      {records.length === 0 ? <StatePanel text="No fee records have been created for this child yet." compact /> : (
+        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {records.map((record) => (
+            <article key={record.id} className="rounded-md border border-border bg-background p-3 text-sm">
+              <p className="font-semibold">{record.feeTitle}</p>
+              <p className="mt-1 text-muted-foreground">Amount: {formatNumber(record.amount)} - Paid: {formatNumber(record.paidAmount)} - Balance: {formatNumber(record.balanceAmount)}</p>
+              <p className="mt-1 text-muted-foreground">Due {formatDate(record.dueDate)} - {humanize(record.status)}</p>
+            </article>
+          ))}
         </div>
       )}
     </section>

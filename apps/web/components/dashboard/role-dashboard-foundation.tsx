@@ -283,6 +283,8 @@ export function RoleDashboardFoundation({ kind }: { kind: keyof typeof configs }
           {kind === "teacher" ? <TeacherAttendanceManager /> : null}
           {kind === "student" ? <StudentTimetablePanel /> : null}
           {kind === "student" ? <StudentAttendancePanel /> : null}
+          {kind === "student" ? <StudentFeesPanel /> : null}
+          {kind === "finance" ? <FinanceFeesPanel /> : null}
         </>
       )}
     </div>
@@ -323,7 +325,7 @@ function TimetableList({ title, records, loading, error, emptyText }: { title: s
       <h2 className="text-base font-semibold">{title}</h2>
       {loading ? <StatePanel text="Loading timetable" compact /> : error ? <StatePanel text={error} tone="error" compact /> : records.length === 0 ? <StatePanel text={emptyText} compact /> : (
         <div className="mt-4 grid gap-3 md:grid-cols-2">
-          {records.map((row) => <div key={String(row.id)} className="rounded-md border border-border bg-background p-3 text-sm"><p className="font-medium">{stringValue(row.subject)} - {stringValue(row.className)}</p><p className="mt-1 text-muted-foreground">{stringValue(row.dayOfWeek).replaceAll("_", " ")} Ã¢â‚¬Â¢ {stringValue(row.startsAt)} to {stringValue(row.endsAt)}</p><p className="mt-1 text-muted-foreground">Teacher: {stringValue(row.teacher)}</p></div>)}
+          {records.map((row) => <div key={String(row.id)} className="rounded-md border border-border bg-background p-3 text-sm"><p className="font-medium">{stringValue(row.subject)} - {stringValue(row.className)}</p><p className="mt-1 text-muted-foreground">{stringValue(row.dayOfWeek).replaceAll("_", " ")} - {stringValue(row.startsAt)} to {stringValue(row.endsAt)}</p><p className="mt-1 text-muted-foreground">Teacher: {stringValue(row.teacher)}</p></div>)}
         </div>
       )}
     </section>
@@ -544,6 +546,64 @@ function StudentAttendancePanel() {
   );
 }
 
+function StudentFeesPanel() {
+  const [records, setRecords] = useState<Row[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    setLoading(true);
+    api("student", "fees?pageSize=20")
+      .then((payload: ApiOne<Row[]>) => setRecords(Array.isArray(payload.data) ? payload.data : []))
+      .catch((caught) => setError(caught instanceof Error ? caught.message : "Fees could not load."))
+      .finally(() => setLoading(false));
+  }, []);
+  return <FeeList title="My Fees" records={records} loading={loading} error={error} emptyText="No fee records have been created for you yet." />;
+}
+
+function FinanceFeesPanel() {
+  const [records, setRecords] = useState<Row[]>([]);
+  const [summary, setSummary] = useState<Row>({});
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    setLoading(true);
+    Promise.all([api("finance", "fees?pageSize=10"), api("finance", "fees/summary")])
+      .then(([feePayload, summaryPayload]) => {
+        setRecords(Array.isArray(feePayload.data) ? feePayload.data : []);
+        setSummary(isObject(summaryPayload.data) ? summaryPayload.data : {});
+      })
+      .catch((caught) => setError(caught instanceof Error ? caught.message : "Finance fees could not load."))
+      .finally(() => setLoading(false));
+  }, []);
+  return (
+    <section className="rounded-lg border border-border bg-surface p-4 shadow-panel">
+      <h2 className="text-base font-semibold">Fee Collection</h2>
+      {loading ? <StatePanel text="Loading finance fees" compact /> : error ? <StatePanel text={error} tone="error" compact /> : (
+        <div className="mt-4 space-y-4">
+          <div className="grid gap-3 md:grid-cols-3">
+            <div className="rounded-md border border-border bg-background p-3 text-sm"><p className="text-muted-foreground">Invoices</p><p className="mt-1 text-xl font-semibold">{formatNumber(Number(summary.total ?? records.length))}</p></div>
+            <div className="rounded-md border border-border bg-background p-3 text-sm"><p className="text-muted-foreground">Invoiced</p><p className="mt-1 text-xl font-semibold">{formatCurrency(Number(summary.amount ?? 0))}</p></div>
+            <div className="rounded-md border border-border bg-background p-3 text-sm"><p className="text-muted-foreground">Paid</p><p className="mt-1 text-xl font-semibold">{formatCurrency(Number(summary.paidAmount ?? 0))}</p></div>
+          </div>
+          <FeeList title="Recent fee records" records={records} loading={false} error={null} emptyText="No fee records have been created yet." />
+        </div>
+      )}
+    </section>
+  );
+}
+
+function FeeList({ title, records, loading, error, emptyText }: { title: string; records: Row[]; loading: boolean; error: string | null; emptyText: string }) {
+  return (
+    <section className="rounded-lg border border-border bg-surface p-4 shadow-panel">
+      <h2 className="text-base font-semibold">{title}</h2>
+      {loading ? <StatePanel text="Loading fees" compact /> : error ? <StatePanel text={error} tone="error" compact /> : records.length === 0 ? <StatePanel text={emptyText} compact /> : (
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          {records.map((row) => <div key={String(row.id)} className="rounded-md border border-border bg-background p-3 text-sm"><p className="font-medium">{stringValue(row.feeTitle)} - {stringValue(row.status)}</p><p className="mt-1 text-muted-foreground">Amount: {formatCurrency(Number(row.amount ?? 0))} - Paid: {formatCurrency(Number(row.paidAmount ?? 0))} - Balance: {formatCurrency(Number(row.balanceAmount ?? 0))}</p><p className="mt-1 text-muted-foreground">Due {formatDate(String(row.dueDate))}</p></div>)}
+        </div>
+      )}
+    </section>
+  );
+}
 function MetricCard({ item, value }: { item: MetricConfig; value: number }) {
   const Icon = item.icon;
   return (

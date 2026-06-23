@@ -96,7 +96,7 @@ const columnsByResource: Record<Resource, string[]> = {
   results: ["id", "studentName", "className", "subject", "assessment", "marksObtained", "maxMarks", "status"],
   performance: ["id", "studentName", "className", "attendanceRate", "averageScore", "homeworkOpen", "pendingFees", "paidPayments"],
   homework: ["id", "title", "className", "subject", "dueDate", "maxMarks", "status"],
-  fees: ["id", "title", "amount", "dueDate", "status"],
+  fees: ["id", "invoiceNumber", "studentName", "feeTitle", "amount", "dueDate", "status"],
   payments: ["id", "studentName", "feeTitle", "amount", "paidOn", "method", "status", "receiptNumber"],
   communication: ["id", "source", "studentName", "channel", "subject", "message", "status", "createdAt"]
 };
@@ -111,7 +111,7 @@ router.get("/dashboard", async (req, res, next) => {
       prisma.teacherAttendance.count({ where: whereFor("attendance", scope) }),
       prisma.teacherMark.count({ where: whereFor("results", scope) }),
       prisma.teacherAssignment.count({ where: whereFor("homework", scope) }),
-      prisma.feeRecord.count({ where: whereFor("fees", scope) }),
+      prisma.financeInvoice.count({ where: whereFor("fees", scope) }),
       prisma.parentFeePayment.count({ where: whereFor("payments", scope) }),
       prisma.parentCommunication.count({ where: inboundCommunicationWhere(scope) }),
       prisma.parentPortalMessage.count({ where: whereFor("communication", scope) }),
@@ -233,6 +233,23 @@ router.post("/children/:studentId/leave-requests", async (req, res, next) => {
   }
 });
 
+router.get("/fees", async (req, res, next) => {
+  try {
+    const scope = await requireParentScope(req, res);
+    if (!scope) return;
+    const query = pageQuerySchema.parse(req.query);
+    const where = withSearch({ schoolId: scope.schoolId, studentName: { in: scope.childNames } }, query.search, query.status, "fees");
+    const [rows, total] = await Promise.all([
+      prisma.financeInvoice.findMany({ where, orderBy: { dueDate: "asc" }, skip: (query.page - 1) * query.pageSize, take: query.pageSize }),
+      prisma.financeInvoice.count({ where })
+    ]);
+    const payments = await prisma.financePayment.groupBy({ by: ["invoiceNumber"], where: { schoolId: scope.schoolId, invoiceNumber: { in: rows.map((row) => row.invoiceNumber) } }, _sum: { amount: true } });
+    const paidByInvoice = new Map(payments.map((item: any) => [item.invoiceNumber, item._sum.amount ?? 0]));
+    return paginated(res, rows.map((row) => serializeFeeInvoice(row, paidByInvoice.get(row.invoiceNumber) ?? 0)), query.page, query.pageSize, total);
+  } catch (error) {
+    next(error);
+  }
+});
 router.get("/:resource", async (req, res, next) => {
   try {
     const resource = parseResource(req, res);
@@ -396,6 +413,10 @@ function serializeLeaveRequest(row: any) {
   };
 }
 
+function serializeFeeInvoice(row: any, paidAmount: number) {
+  const balanceAmount = Math.max(0, Number(row.amount ?? 0) - paidAmount);
+  return { ...row, paidAmount, balanceAmount };
+}
 async function listResource(resource: Resource, scope: ParentScope, search?: string, status?: string) {
   if (resource === "children") return filterRows(scope.children, search, status, ["admissionNumber", "name", "guardianName", "guardianPhone", "className"]);
   if (resource === "performance") return filterRows(await buildPerformance(scope), search, status, ["studentName", "className"]);
@@ -406,7 +427,7 @@ async function listResource(resource: Resource, scope: ParentScope, search?: str
     timetable: prisma.timetableSlot,
     results: prisma.teacherMark,
     homework: prisma.teacherAssignment,
-    fees: prisma.feeRecord,
+    fees: prisma.financeInvoice,
     payments: prisma.parentFeePayment
   };
   const rows = await delegateByResource[resource].findMany({ where: withSearch(whereFor(resource, scope), search, status, resource), orderBy: orderByFor(resource) });
@@ -425,7 +446,7 @@ function whereFor(resource: Exclude<Resource, "children" | "performance">, scope
     case "homework":
       return { schoolId, className: { in: scope.classNames }, status: { not: "DRAFT" } };
     case "fees":
-      return { schoolId };
+      return { schoolId, studentName: { in: scope.childNames } };
     case "payments":
       return { schoolId, parentId: scope.parentId };
     case "communication":
@@ -455,7 +476,7 @@ async function buildPerformance(scope: ParentScope) {
       db.teacherAttendance.findMany({ where: { schoolId: scope.schoolId, studentName: child.name } }),
       db.teacherMark.findMany({ where: { schoolId: scope.schoolId, studentName: child.name } }),
       db.teacherAssignment.count({ where: { schoolId: scope.schoolId, className: child.className, status: "PUBLISHED" } }),
-      db.feeRecord.count({ where: { schoolId: scope.schoolId, status: { in: ["PENDING", "OVERDUE"] } } }),
+      db.financeInvoice.count({ where: { schoolId: scope.schoolId, studentName: child.name, status: { in: ["UNPAID", "PARTIAL", "OVERDUE"] } } }),
       db.parentFeePayment.count({ where: { schoolId: scope.schoolId, parentId: scope.parentId, studentName: child.name, status: "PAID" } })
     ]);
     const present = attendance.filter((row: any) => row.status === "PRESENT").length;
@@ -486,7 +507,7 @@ function withSearch(where: any, search: string | undefined, status: string | und
     timetable: ["className", "subject", "teacher", "dayOfWeek"],
     results: ["studentName", "className", "subject", "assessment"],
     homework: ["title", "className", "subject"],
-    fees: ["title"],
+    fees: ["invoiceNumber", "studentName", "feeTitle"],
     payments: ["studentName", "feeTitle", "method", "receiptNumber"]
   };
   next.OR = (searchFields[resource] ?? []).map((field) => ({ [field]: { contains: search, mode: "insensitive" } }));

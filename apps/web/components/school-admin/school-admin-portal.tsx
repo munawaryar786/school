@@ -127,7 +127,7 @@ const modules: ModuleConfig[] = [
   { id: "settings", label: "Settings", icon: Settings, purpose: "School profile, campuses, academic defaults, branding, and provider settings.", status: "Preview", nextAction: "Configure once settings workflow is enabled", requirements: "Needs school profile and provider configuration records." }
 ];
 
-const openedModules = new Set<ModuleId>(["academic", "classes", "sections", "subjects", "admissions", "students", "teachers", "parents", "attendance", "timetable", "exams"]);
+const openedModules = new Set<ModuleId>(["academic", "classes", "sections", "subjects", "admissions", "students", "teachers", "parents", "attendance", "timetable", "exams", "fees"]);
 const lockedDependencyText: Partial<Record<ModuleId, string>> = {
   attendance: "Locked until academic years, classes, sections, students, and teacher assignment foundations are complete.",
   timetable: "Locked until classes, sections, subjects, and teacher assignments are available.",
@@ -139,6 +139,7 @@ const lockedDependencyText: Partial<Record<ModuleId, string>> = {
 };
 
 const statusOptions = [{ value: "ACTIVE", label: "Active" }, { value: "INACTIVE", label: "Inactive" }];
+const feeStatusOptions = [{ value: "UNPAID", label: "Unpaid" }, { value: "PARTIAL", label: "Partial" }, { value: "PAID", label: "Paid" }, { value: "OVERDUE", label: "Overdue" }, { value: "WAIVED", label: "Waived" }];
 const dayOptions = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"].map((value) => ({ value, label: humanize(value) }));
 
 const relationOptions = [{ value: "FATHER", label: "Father" }, { value: "MOTHER", label: "Mother" }, { value: "GUARDIAN", label: "Guardian" }, { value: "OTHER", label: "Other" }];
@@ -348,6 +349,8 @@ export function SchoolAdminPortal() {
           <TimetableWorkspace refreshKey={refreshKey} onChanged={refreshAll} />
         ) : activeModule === "exams" ? (
           <ExamsWorkspace refreshKey={refreshKey} onChanged={refreshAll} />
+        ) : activeModule === "fees" ? (
+          <FeesWorkspace refreshKey={refreshKey} onChanged={refreshAll} />
         ) : openedModules.has(activeModule) ? (
           <CorePeopleWorkspace moduleId={activeModule} refreshKey={refreshKey} onChanged={refreshAll} />
         ) : (
@@ -537,6 +540,58 @@ function LeaveRequestReviewQueue() {
   );
 }
 
+function FeesWorkspace({ refreshKey, onChanged }: { refreshKey: number; onChanged: () => void }) {
+  const emptyForm = { studentId: "", feeTitle: "", amount: 0, dueDate: new Date().toISOString().slice(0, 10), status: "UNPAID" };
+  const { rows, loading, error, refresh, setRows } = useResourceList("fees", refreshKey);
+  const students = useResourceList("students", refreshKey);
+  const [summary, setSummary] = useState<ResourceRow | null>(null);
+  const [form, setForm] = useState(emptyForm);
+  const [editing, setEditing] = useState<ResourceRow | null>(null);
+  const [payment, setPayment] = useState<{ id: string; paidAmount: number; method: string } | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
+
+  useEffect(() => { api("fees/summary").then((payload: ApiOne<ResourceRow>) => setSummary(payload.data ?? null)).catch(() => setSummary(null)); }, [refreshKey, rows.length]);
+  const update = (key: keyof typeof emptyForm, value: string | number) => setForm((current) => ({ ...current, [key]: value }));
+  const reset = () => { setEditing(null); setForm(emptyForm); };
+  const startEdit = (row: ResourceRow) => {
+    setEditing(row);
+    const student = students.rows.find((item) => item.name === row.studentName);
+    setForm({ studentId: String(student?.id ?? ""), feeTitle: String(row.feeTitle ?? ""), amount: Number(row.amount ?? 0), dueDate: String(row.dueDate ?? "").slice(0, 10), status: String(row.status ?? "UNPAID") });
+    setMessage(null);
+  };
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!form.studentId || !form.feeTitle || Number(form.amount) <= 0 || !form.dueDate) { setMessage({ tone: "error", text: "Student, fee type, positive amount, and due date are required." }); return; }
+    setSaving(true); setMessage(null);
+    try {
+      const payload: ApiOne<ResourceRow> = await api(editing ? `fees/${editing.id}` : "fees", { method: editing ? "PATCH" : "POST", body: JSON.stringify(form) });
+      setRows((current) => editing ? current.map((row) => row.id === payload.data.id ? payload.data : row) : [payload.data, ...current]);
+      setMessage({ tone: "success", text: editing ? "Fee record updated." : "Fee record created." });
+      reset(); refresh(); onChanged();
+    } catch (caught) { setMessage({ tone: "error", text: caught instanceof Error ? caught.message : "Fee record could not be saved." }); }
+    finally { setSaving(false); }
+  }
+  async function savePayment() {
+    if (!payment || Number(payment.paidAmount) <= 0) { setMessage({ tone: "error", text: "Enter a positive paid amount." }); return; }
+    setSaving(true); setMessage(null);
+    try {
+      const payload: ApiOne<ResourceRow> = await api(`fees/${payment.id}/payment`, { method: "PATCH", body: JSON.stringify({ paidAmount: Number(payment.paidAmount), method: payment.method }) });
+      setRows((current) => current.map((row) => row.id === payload.data.id ? payload.data : row));
+      setPayment(null); setMessage({ tone: "success", text: "Payment recorded." }); refresh(); onChanged();
+    } catch (caught) { setMessage({ tone: "error", text: caught instanceof Error ? caught.message : "Payment could not be recorded." }); }
+    finally { setSaving(false); }
+  }
+  return (
+    <div className="space-y-5">
+      <section className="rounded-lg border border-border bg-surface p-5 shadow-panel"><StatusBadge status="Ready" /><h2 className="mt-3 text-2xl font-semibold">Fees / Finance</h2><p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">Create real student fee records, monitor balances, and record partial or full payments.</p></section>
+      <section className="grid gap-4 md:grid-cols-3"><MetricCard label="Fee records" value={Number(summary?.total ?? rows.length)} detail="Student fee invoices" Icon={WalletCards} /><MetricCard label="Total amount" value={Number(summary?.amount ?? 0)} detail="Invoice amount" Icon={WalletCards} /><MetricCard label="Paid amount" value={Number(summary?.paidAmount ?? 0)} detail="Recorded payments" Icon={WalletCards} /></section>
+      <form className="rounded-lg border border-border bg-surface p-4 shadow-panel" onSubmit={submit}><h3 className="text-base font-semibold">{editing ? "Edit fee record" : "Create fee record"}</h3>{message ? <div className={`mt-4 rounded-md border p-3 text-sm ${message.tone === "success" ? "border-success/30 bg-success/10 text-success" : "border-error/30 bg-error/10 text-error"}`}>{message.text}</div> : null}<div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3"><FieldControl field={{ name: "studentId", label: "Student", type: "select", required: true, options: [{ value: "", label: students.loading ? "Loading students" : "Select student" }, ...students.rows.map((row) => ({ value: String(row.id), label: optionLabelForStudent(row) }))] }} value={form.studentId} onChange={(value) => update("studentId", value)} /><FieldControl field={{ name: "feeTitle", label: "Fee type", required: true, placeholder: "Monthly tuition" }} value={form.feeTitle} onChange={(value) => update("feeTitle", value)} /><FieldControl field={{ name: "amount", label: "Amount", type: "number", required: true }} value={form.amount} onChange={(value) => update("amount", Number(value))} /><FieldControl field={{ name: "dueDate", label: "Due date", type: "date", required: true }} value={form.dueDate} onChange={(value) => update("dueDate", value)} /><FieldControl field={{ name: "status", label: "Status", type: "select", options: feeStatusOptions }} value={form.status} onChange={(value) => update("status", value)} /></div><div className="mt-4 flex flex-wrap gap-2"><button className="inline-flex min-h-10 items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-60" disabled={saving || students.rows.length === 0} type="submit">{saving ? "Saving..." : editing ? "Update fee" : "Create fee"}</button>{editing ? <button className="inline-flex min-h-10 items-center justify-center rounded-md border border-border bg-background px-4 text-sm font-medium" onClick={reset} type="button">Cancel edit</button> : null}</div></form>
+      {payment ? <section className="rounded-lg border border-border bg-surface p-4 shadow-panel"><h3 className="text-base font-semibold">Record payment</h3><div className="mt-4 grid gap-3 md:grid-cols-3"><FieldControl field={{ name: "paidAmount", label: "Paid amount", type: "number", required: true }} value={payment.paidAmount} onChange={(value) => setPayment((current) => current ? { ...current, paidAmount: Number(value) } : current)} /><FieldControl field={{ name: "method", label: "Method", type: "select", options: [{ value: "CASH", label: "Cash" }, { value: "BANK", label: "Bank" }, { value: "ONLINE", label: "Online" }] }} value={payment.method} onChange={(value) => setPayment((current) => current ? { ...current, method: value } : current)} /></div><div className="mt-4 flex gap-2"><button className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground" onClick={savePayment} type="button">Save payment</button><button className="rounded-md border border-border bg-background px-4 py-2 text-sm font-medium" onClick={() => setPayment(null)} type="button">Cancel</button></div></section> : null}
+      <section className="rounded-lg border border-border bg-surface shadow-panel"><div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3"><h3 className="text-base font-semibold">Fee records</h3><span className="rounded-md border border-border bg-background px-2 py-1 text-sm font-medium">{formatNumber(rows.length)}</span></div>{loading ? <StatePanel text="Loading fees" compact /> : error ? <StatePanel text={error} tone="error" compact onRetry={refresh} /> : rows.length === 0 ? <StatePanel text="No fee records have been created yet." compact /> : <div className="overflow-x-auto"><table className="min-w-full divide-y divide-border text-sm"><thead className="bg-muted/40 text-left text-xs uppercase text-muted-foreground"><tr><th className="px-4 py-3 font-semibold">Student</th><th className="px-4 py-3 font-semibold">Fee</th><th className="px-4 py-3 font-semibold">Amount</th><th className="px-4 py-3 font-semibold">Paid</th><th className="px-4 py-3 font-semibold">Balance</th><th className="px-4 py-3 font-semibold">Due</th><th className="px-4 py-3 font-semibold">Status</th><th className="px-4 py-3 font-semibold">Action</th></tr></thead><tbody className="divide-y divide-border">{rows.map((row) => <tr key={row.id}><td className="px-4 py-3">{row.studentName}</td><td className="px-4 py-3">{row.feeTitle}</td><td className="px-4 py-3">{formatNumber(row.amount)}</td><td className="px-4 py-3">{formatNumber(row.paidAmount)}</td><td className="px-4 py-3">{formatNumber(row.balanceAmount)}</td><td className="px-4 py-3">{shortDate(row.dueDate)}</td><td className="px-4 py-3">{humanize(row.status ?? "")}</td><td className="px-4 py-3"><div className="flex flex-wrap gap-2"><button className="rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium" onClick={() => startEdit(row)} type="button">Edit</button><button className="rounded-md border border-success/30 bg-success/10 px-3 py-1.5 text-xs font-medium text-success" onClick={() => setPayment({ id: row.id, paidAmount: Number(row.balanceAmount ?? row.amount ?? 0), method: "CASH" })} type="button">Payment</button></div></td></tr>)}</tbody></table></div>}</section>
+    </div>
+  );
+}
 function ExamsWorkspace({ refreshKey, onChanged }: { refreshKey: number; onChanged: () => void }) {
   const emptyForm = { title: "", className: "", subject: "", examDate: new Date().toISOString().slice(0, 10), maxMarks: 100, passingMarks: 40, status: "SCHEDULED" };
   const { rows, loading, error, refresh, setRows } = useResourceList("exams", refreshKey);
@@ -820,7 +875,9 @@ function SetupCoach({ dashboard, readiness, onOpenModule }: { dashboard: ReturnT
     { label: "Mark attendance", done: flags?.hasAttendance ?? dashboard.metrics.attendance > 0, count: readiness?.counts?.attendanceRecords ?? dashboard.metrics.attendance, moduleId: "attendance" as ModuleId, action: "Open attendance" },
     { label: "Create timetable slots", done: flags?.hasTimetable ?? dashboard.metrics.timetable > 0, count: readiness?.counts?.timetableSlots ?? dashboard.metrics.timetable, moduleId: "timetable" as ModuleId, action: "Open timetable" },
     { label: "Create exam schedules", done: flags?.hasExam ?? dashboard.metrics.exams > 0, count: readiness?.counts?.examRecords ?? dashboard.metrics.exams, moduleId: "exams" as ModuleId, action: "Open exams" },
-    { label: "Enter marks", done: flags?.hasResult ?? false, count: readiness?.counts?.resultRecords ?? 0, moduleId: "exams" as ModuleId, action: "Review results" }
+    { label: "Enter marks", done: flags?.hasResult ?? false, count: readiness?.counts?.resultRecords ?? 0, moduleId: "exams" as ModuleId, action: "Review results" },
+    { label: "Create fee records", done: flags?.hasFee ?? dashboard.metrics.fees > 0, count: readiness?.counts?.feeRecords ?? dashboard.metrics.fees, moduleId: "fees" as ModuleId, action: "Open fees" },
+    { label: "Record payments", done: flags?.hasFeePayment ?? false, count: readiness?.counts?.feePayments ?? 0, moduleId: "fees" as ModuleId, action: "Record payments" }
   ] as const;
   const complete = steps.filter((step) => step.done).length;
 

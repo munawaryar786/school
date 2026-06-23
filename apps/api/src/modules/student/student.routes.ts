@@ -73,7 +73,7 @@ const modelByResource: Record<Resource, keyof typeof prisma> = {
   "exam-attempts": "studentOnlineExamAttempt",
   certificates: "studentCertificate",
   transcripts: "studentTranscript",
-  fees: "feeRecord",
+  fees: "financeInvoice",
   payments: "studentFeePayment"
 };
 
@@ -88,7 +88,7 @@ const columnsByResource: Record<Resource, string[]> = {
   "exam-attempts": ["id", "examTitle", "subject", "score", "status", "submittedAt"],
   certificates: ["id", "title", "certificateNumber", "issuedOn", "fileUrl", "status"],
   transcripts: ["id", "title", "academicYear", "gpa", "fileUrl", "status"],
-  fees: ["id", "title", "amount", "dueDate", "status"],
+  fees: ["id", "invoiceNumber", "studentName", "feeTitle", "amount", "dueDate", "status"],
   payments: ["id", "feeTitle", "amount", "paidOn", "method", "status", "receiptNumber"]
 };
 
@@ -109,7 +109,7 @@ router.get("/dashboard", async (req, res, next) => {
       prisma.studentOnlineExamAttempt.count({ where: whereFor("exam-attempts", scope) }),
       prisma.studentCertificate.count({ where: whereFor("certificates", scope) }),
       prisma.studentTranscript.count({ where: whereFor("transcripts", scope) }),
-      prisma.feeRecord.count({ where: whereFor("fees", scope) }),
+      prisma.financeInvoice.count({ where: whereFor("fees", scope) }),
       prisma.studentFeePayment.count({ where: whereFor("payments", scope) })
     ]);
     return ok(res, { attendance, timetable, assignments, submissions, materials, results, onlineExams, examAttempts, certificates, transcripts, fees, payments, profile: scope.profile });
@@ -127,6 +127,23 @@ router.get("/timetable", async (req, res, next) => {
       orderBy: [{ dayOfWeek: "asc" }, { startsAt: "asc" }]
     });
     return ok(res, rows);
+  } catch (error) {
+    next(error);
+  }
+});
+router.get("/fees", async (req, res, next) => {
+  try {
+    const scope = await requireStudentScope(req, res);
+    if (!scope) return;
+    const query = pageQuerySchema.parse(req.query);
+    const where = withSearch("fees", { schoolId: scope.schoolId, studentName: scope.studentName }, query.search, query.status);
+    const [rows, total] = await Promise.all([
+      prisma.financeInvoice.findMany({ where, orderBy: { dueDate: "asc" }, skip: (query.page - 1) * query.pageSize, take: query.pageSize }),
+      prisma.financeInvoice.count({ where })
+    ]);
+    const payments = await prisma.financePayment.groupBy({ by: ["invoiceNumber"], where: { schoolId: scope.schoolId, invoiceNumber: { in: rows.map((row) => row.invoiceNumber) } }, _sum: { amount: true } });
+    const paidByInvoice = new Map(payments.map((item: any) => [item.invoiceNumber, item._sum.amount ?? 0]));
+    return paginated(res, rows.map((row) => serializeFeeInvoice(row, paidByInvoice.get(row.invoiceNumber) ?? 0)), query.page, query.pageSize, total);
   } catch (error) {
     next(error);
   }
@@ -184,6 +201,10 @@ router.delete("/:resource/:id", async (req, res, next) => {
   }
 });
 
+function serializeFeeInvoice(row: any, paidAmount: number) {
+  const balanceAmount = Math.max(0, Number(row.amount ?? 0) - paidAmount);
+  return { ...row, paidAmount, balanceAmount };
+}
 function parseResource(req: Request, res: Response): Resource | null {
   const resource = req.params.resource as Resource;
   if (!resources.includes(resource)) {
@@ -254,7 +275,7 @@ function whereFor(resource: Resource, scope: { schoolId: string; studentId: stri
     case "transcripts":
       return { schoolId, studentId: scope.studentId };
     case "fees":
-      return { schoolId };
+      return { schoolId, studentName: scope.studentName };
     case "payments":
       return { schoolId, studentId: scope.studentId };
   }
@@ -281,7 +302,7 @@ function withSearch(resource: Resource, where: any, search?: string, status?: st
     "exam-attempts": ["examTitle", "subject"],
     certificates: ["title", "certificateNumber", "fileUrl"],
     transcripts: ["title", "academicYear", "gpa", "fileUrl"],
-    fees: ["title"],
+    fees: ["invoiceNumber", "studentName", "feeTitle"],
     payments: ["feeTitle", "method", "receiptNumber"]
   };
   next.OR = searchFields[resource].map((field) => ({ [field]: { contains: search, mode: "insensitive" } }));

@@ -31,6 +31,7 @@ export async function buildSchoolReadiness(schoolId: string) {
     examRecords,
     resultRecords,
     feeRecords,
+    feePayments,
     libraryBooks,
     lmsProgress
   ] = await Promise.all([
@@ -50,12 +51,13 @@ export async function buildSchoolReadiness(schoolId: string) {
     db.timetableSlot.count({ where: { schoolId } }),
     db.examinationSchedule.count({ where: { schoolId } }),
     db.teacherMark.count({ where: { schoolId } }),
-    db.feeRecord.count({ where: { schoolId } }),
+    db.financeInvoice.count({ where: { schoolId } }),
+    db.financePayment.count({ where: { schoolId } }),
     db.libraryBook.count({ where: { schoolId } }),
     db.lmsProgress.count({ where: { schoolId } })
   ]);
 
-  const counts = { academicYears, activeAcademicYears, classes, sections, subjects, admissions, students, teachers, teacherAssignments, parentGuardians, parentChildLinks, leaveRequests, attendanceRecords, timetableSlots, examRecords, resultRecords, feeRecords, libraryBooks, lmsProgress };
+  const counts = { academicYears, activeAcademicYears, classes, sections, subjects, admissions, students, teachers, teacherAssignments, parentGuardians, parentChildLinks, leaveRequests, attendanceRecords, timetableSlots, examRecords, resultRecords, feeRecords, feePayments, libraryBooks, lmsProgress };
   const flags = {
     hasAcademicYear: academicYears > 0,
     hasActiveAcademicYear: activeAcademicYears > 0,
@@ -70,6 +72,8 @@ export async function buildSchoolReadiness(schoolId: string) {
     hasTimetable: timetableSlots > 0,
     hasExam: examRecords > 0,
     hasResult: resultRecords > 0,
+    hasFee: feeRecords > 0,
+    hasFeePayment: feePayments > 0,
     hasParentGuardian: parentGuardians > 0,
     hasParentChildLink: parentChildLinks > 0
   };
@@ -105,7 +109,7 @@ function buildModuleRules(flags: Record<string, boolean>, counts: Record<string,
     attendance: { label: "Attendance", ready: flags.hasActiveAcademicYear && flags.hasClass && flags.hasSection && flags.hasStudent && flags.hasTeacherAssignment, dependencies: [["Active academic year", flags.hasActiveAcademicYear], ["Class", flags.hasClass], ["Section", flags.hasSection], ["Student", flags.hasStudent], ["Teacher assignment", flags.hasTeacherAssignment]], nextAction: flags.hasTeacherAssignment ? "Mark class attendance from the teacher portal" : "Complete academic setup, students, and teacher assignments" },
     timetable: { label: "Timetable", ready: flags.hasActiveAcademicYear && flags.hasClass && flags.hasSection && flags.hasSubject && flags.hasTeacherAssignment && flags.hasTimetable, dependencies: [["Active academic year", flags.hasActiveAcademicYear], ["Class", flags.hasClass], ["Section", flags.hasSection], ["Subject", flags.hasSubject], ["Teacher assignment", flags.hasTeacherAssignment], ["Timetable slot", flags.hasTimetable]], nextAction: flags.hasTeacherAssignment ? "Create timetable slots" : "Complete academic setup and teacher assignments" },
     exams: { label: "Exams/Results", ready: flags.hasActiveAcademicYear && flags.hasClass && flags.hasSection && flags.hasSubject && flags.hasStudent && flags.hasExam && flags.hasResult, dependencies: [["Active academic year", flags.hasActiveAcademicYear], ["Class", flags.hasClass], ["Section", flags.hasSection], ["Subject", flags.hasSubject], ["Student", flags.hasStudent], ["Exam schedule", flags.hasExam], ["Result marks", flags.hasResult]], nextAction: flags.hasExam ? "Enter marks" : "Create exam schedules" },
-    fees: { label: "Fees/Finance", ready: flags.hasStudent && counts.feeRecords > 0, dependencies: [["Student", flags.hasStudent], ["Fee records", counts.feeRecords > 0]], nextAction: flags.hasStudent ? "Open fee setup in a later phase" : "Create student profiles first" },
+    fees: { label: "Fees/Finance", ready: flags.hasStudent && flags.hasFee, dependencies: [["Student", flags.hasStudent], ["Fee records", flags.hasFee]], nextAction: flags.hasFee ? "Record payments" : flags.hasStudent ? "Create fee records" : "Create student profiles first" },
     library: { label: "Library", ready: flags.hasStudent && counts.libraryBooks > 0, dependencies: [["Student", flags.hasStudent], ["Library catalog", counts.libraryBooks > 0]], nextAction: flags.hasStudent ? "Open library catalog in a later phase" : "Create student profiles first" },
     lms: { label: "LMS", ready: flags.hasClass && flags.hasSubject && flags.hasTeacherAssignment, dependencies: [["Class", flags.hasClass], ["Subject", flags.hasSubject], ["Teacher assignment", flags.hasTeacherAssignment]], nextAction: "Complete class, subject, and teacher assignment setup" },
     reading: { label: "Reading Program", ready: false, comingLater: true, dependencies: [["Library catalog", counts.libraryBooks > 0]], nextAction: "Build after library catalog is stable" },

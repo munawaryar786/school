@@ -156,6 +156,31 @@ const examScheduleSchema = z.object({
   status: z.string().trim().default("SCHEDULED")
 });
 
+
+const feeQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(100),
+  className: z.string().trim().optional(),
+  studentName: z.string().trim().optional(),
+  status: z.string().trim().optional(),
+  search: z.string().trim().optional()
+});
+
+const feeInvoiceSchema = z.object({
+  studentId: z.string().trim().min(1).optional(),
+  studentName: z.string().trim().min(2).optional(),
+  feeTitle: z.string().trim().min(2),
+  amount: z.coerce.number().int().min(1),
+  dueDate: z.coerce.date(),
+  status: z.string().trim().default("UNPAID")
+});
+
+const feePaymentSchema = z.object({
+  paidAmount: z.coerce.number().int().min(1),
+  method: z.string().trim().default("CASH"),
+  paidOn: z.coerce.date().optional(),
+  receiptNumber: z.string().trim().min(2).optional()
+});
 type Resource =
   | "academic-years"
   | "classes"
@@ -293,14 +318,14 @@ router.get("/dashboard", async (req, res, next) => {
       prisma.admissionApplication.count({ where: { schoolId } }),
       prisma.teacherAttendance.count({ where: { schoolId } }),
       prisma.libraryBook.count({ where: { schoolId } }),
-      prisma.feeRecord.count({ where: { schoolId } }),
+      prisma.financeInvoice.count({ where: { schoolId } }),
       prisma.examinationSchedule.count({ where: { schoolId } }),
       prisma.timetableSlot.count({ where: { schoolId } }),
       prisma.lmsProgress.count({ where: { schoolId } }),
       prisma.studentProfile.groupBy({ by: ["className"], where: { schoolId }, _count: { _all: true }, orderBy: { className: "asc" } }),
       prisma.admissionApplication.groupBy({ by: ["status"], where: { schoolId }, _count: { _all: true }, orderBy: { status: "asc" } }),
       prisma.teacherAttendance.groupBy({ by: ["status"], where: { schoolId }, _count: { _all: true }, orderBy: { status: "asc" } }),
-      prisma.feeRecord.groupBy({ by: ["status"], where: { schoolId }, _count: { _all: true }, _sum: { amount: true }, orderBy: { status: "asc" } }),
+      prisma.financeInvoice.groupBy({ by: ["status"], where: { schoolId }, _count: { _all: true }, _sum: { amount: true }, orderBy: { status: "asc" } }),
       prisma.examinationSchedule.groupBy({ by: ["status"], where: { schoolId }, _count: { _all: true }, orderBy: { status: "asc" } }),
       prisma.libraryBook.groupBy({ by: ["status"], where: { schoolId }, _count: { _all: true }, orderBy: { status: "asc" } }),
       prisma.lmsProgress.groupBy({ by: ["status"], where: { schoolId }, _count: { _all: true }, orderBy: { status: "asc" } }),
@@ -571,6 +596,100 @@ router.get("/attendance/summary", async (req, res, next) => {
   }
 });
 
+router.get("/fees/summary", async (req, res, next) => {
+  try {
+    const schoolId = requireSchool(req, res);
+    if (!schoolId) return;
+    const query = feeQuerySchema.parse(req.query);
+    const where = buildFeeWhere(schoolId, query);
+    const [total, amount, payments, byStatus] = await Promise.all([
+      prisma.financeInvoice.count({ where }),
+      prisma.financeInvoice.aggregate({ where, _sum: { amount: true } }),
+      prisma.financePayment.aggregate({ where: { schoolId }, _sum: { amount: true } }),
+      prisma.financeInvoice.groupBy({ by: ["status"], where, _count: { _all: true }, _sum: { amount: true }, orderBy: { status: "asc" } })
+    ]);
+    return ok(res, { total, amount: amount._sum.amount ?? 0, paidAmount: payments._sum.amount ?? 0, byStatus: byStatus.map((item: any) => ({ status: item.status, count: item._count._all, amount: item._sum.amount ?? 0 })) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/fees", async (req, res, next) => {
+  try {
+    const schoolId = requireSchool(req, res);
+    if (!schoolId) return;
+    const query = feeQuerySchema.parse(req.query);
+    const where = buildFeeWhere(schoolId, query);
+    const [rows, total] = await Promise.all([
+      prisma.financeInvoice.findMany({ where, orderBy: { dueDate: "desc" }, skip: (query.page - 1) * query.pageSize, take: query.pageSize }),
+      prisma.financeInvoice.count({ where })
+    ]);
+    const payments = await prisma.financePayment.groupBy({ by: ["invoiceNumber"], where: { schoolId, invoiceNumber: { in: rows.map((row) => row.invoiceNumber) } }, _sum: { amount: true } });
+    const paidByInvoice = new Map(payments.map((item: any) => [item.invoiceNumber, item._sum.amount ?? 0]));
+    return paginated(res, rows.map((row) => serializeFeeInvoice(row, paidByInvoice.get(row.invoiceNumber) ?? 0)), query.page, query.pageSize, total);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/fees", async (req, res, next) => {
+  try {
+    const schoolId = requireSchool(req, res);
+    if (!schoolId) return;
+    const input = feeInvoiceSchema.parse(req.body);
+    const student = await resolveFeeStudent(schoolId, input, res);
+    if (!student) return;
+    const invoiceNumber = await nextFinanceInvoiceNo(schoolId);
+    const row = await prisma.financeInvoice.create({ data: { schoolId, invoiceNumber, studentName: student.name, feeTitle: input.feeTitle, amount: input.amount, dueDate: input.dueDate, status: input.status } });
+    await writeAudit(req, "CREATE", "fees", row.id, { invoiceNumber, studentName: student.name, amount: input.amount });
+    return ok(res, serializeFeeInvoice(row, 0), 201);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.patch("/fees/:id", async (req, res, next) => {
+  try {
+    const schoolId = requireSchool(req, res);
+    if (!schoolId) return;
+    const existing = await prisma.financeInvoice.findFirst({ where: { id: routeId(req), schoolId } });
+    if (!existing) return fail(res, 404, "NOT_FOUND", "Fee record not found for this school.");
+    const input = feeInvoiceSchema.partial().parse(req.body);
+    let studentName = existing.studentName;
+    if (input.studentId || input.studentName) {
+      const student = await resolveFeeStudent(schoolId, input, res);
+      if (!student) return;
+      studentName = student.name;
+    }
+    const row = await prisma.financeInvoice.update({ where: { id: existing.id }, data: { ...(input.feeTitle !== undefined ? { feeTitle: input.feeTitle } : {}), ...(input.amount !== undefined ? { amount: input.amount } : {}), ...(input.dueDate !== undefined ? { dueDate: input.dueDate } : {}), ...(input.status !== undefined ? { status: input.status } : {}), studentName } });
+    const paid = await paidForInvoice(schoolId, row.invoiceNumber);
+    await writeAudit(req, "UPDATE", "fees", row.id, { invoiceNumber: row.invoiceNumber });
+    return ok(res, serializeFeeInvoice(row, paid));
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.patch("/fees/:id/payment", async (req, res, next) => {
+  try {
+    const schoolId = requireSchool(req, res);
+    if (!schoolId) return;
+    const invoice = await prisma.financeInvoice.findFirst({ where: { id: routeId(req), schoolId } });
+    if (!invoice) return fail(res, 404, "NOT_FOUND", "Fee record not found for this school.");
+    const input = feePaymentSchema.parse(req.body);
+    const alreadyPaid = await paidForInvoice(schoolId, invoice.invoiceNumber);
+    if (alreadyPaid + input.paidAmount > invoice.amount) return fail(res, 400, "VALIDATION_ERROR", "Paid amount cannot exceed fee amount.");
+    const receiptNumber = input.receiptNumber ?? await nextFinanceReceiptNo(schoolId);
+    await prisma.financePayment.create({ data: { schoolId, receiptNumber, payerName: invoice.studentName, studentName: invoice.studentName, invoiceNumber: invoice.invoiceNumber, amount: input.paidAmount, paidOn: input.paidOn ?? new Date(), method: input.method, status: "PAID" } });
+    const paidAmount = alreadyPaid + input.paidAmount;
+    const status = paidAmount >= invoice.amount ? "PAID" : paidAmount > 0 ? "PARTIAL" : invoice.status;
+    const row = await prisma.financeInvoice.update({ where: { id: invoice.id }, data: { status } });
+    await writeAudit(req, "UPDATE", "fees", invoice.id, { payment: input.paidAmount, status });
+    return ok(res, serializeFeeInvoice(row, paidAmount));
+  } catch (error) {
+    next(error);
+  }
+});
 router.get("/exams", async (req, res, next) => {
   try {
     const schoolId = requireSchool(req, res);
@@ -1343,6 +1462,52 @@ function buildAttendanceWhere(schoolId: string, query: { date?: Date; className?
 }
 
 
+function buildFeeWhere(schoolId: string, query: { studentName?: string; className?: string; status?: string; search?: string }) {
+  const where: any = { schoolId };
+  if (query.studentName) where.studentName = query.studentName;
+  if (query.status) where.status = query.status;
+  if (query.search) {
+    where.OR = ["invoiceNumber", "studentName", "feeTitle", "status"].map((field) => ({ [field]: { contains: query.search, mode: "insensitive" } }));
+  }
+  return where;
+}
+
+async function resolveFeeStudent(schoolId: string, input: Record<string, any>, res: Response) {
+  const where: any = { schoolId };
+  if (input.studentId) where.id = input.studentId;
+  else if (input.studentName) where.name = { equals: input.studentName, mode: "insensitive" };
+  else {
+    fail(res, 400, "VALIDATION_ERROR", "Student is required.");
+    return null;
+  }
+  const student = await prisma.studentProfile.findFirst({ where, select: { id: true, name: true, className: true } });
+  if (!student) {
+    fail(res, 404, "NOT_FOUND", "Student not found for this school.");
+    return null;
+  }
+  return student;
+}
+
+async function paidForInvoice(schoolId: string, invoiceNumber: string) {
+  const aggregate = await prisma.financePayment.aggregate({ where: { schoolId, invoiceNumber }, _sum: { amount: true } });
+  return aggregate._sum.amount ?? 0;
+}
+
+function serializeFeeInvoice(row: any, paidAmount: number) {
+  return { ...row, paidAmount, balanceAmount: Math.max(0, row.amount - paidAmount) };
+}
+
+async function nextFinanceInvoiceNo(schoolId: string) {
+  const year = new Date().getFullYear();
+  const count = await prisma.financeInvoice.count({ where: { schoolId, invoiceNumber: { startsWith: `INV-${year}-` } } });
+  return `INV-${year}-${String(count + 1).padStart(4, "0")}`;
+}
+
+async function nextFinanceReceiptNo(schoolId: string) {
+  const year = new Date().getFullYear();
+  const count = await prisma.financePayment.count({ where: { schoolId, receiptNumber: { startsWith: `RCPT-${year}-` } } });
+  return `RCPT-${year}-${String(count + 1).padStart(4, "0")}`;
+}
 function buildExamWhere(schoolId: string, query: { className?: string; subject?: string; status?: string; search?: string }) {
   const where: any = { schoolId };
   if (query.className) where.className = query.className;
